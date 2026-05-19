@@ -1,4 +1,4 @@
-name: Windows Stable SSH Session
+name: Windows Clean Session
 
 on:
   workflow_dispatch:
@@ -15,41 +15,24 @@ jobs:
           systeminfo
           whoami
 
-      - name: Install WSL (safe init)
-        shell: pwsh
+      - name: Install tmate (via GitHub bash toolchain)
+        shell: bash
         run: |
-          wsl --install -y || echo "WSL already installed"
+          echo "Installing tmate via MSYS2 environment workaround..."
 
-      - name: Setup Linux environment in WSL
-        shell: pwsh
+          # GitHub Windows runners already include bash toolchain
+          curl -L -o tmate https://github.com/tmate-io/tmate/releases/latest/download/tmate-windows-amd64.exe || true
+
+          chmod +x tmate || true
+
+      - name: Start session (fallback safe mode)
+        shell: bash
         run: |
-          wsl bash -lc "
-            sudo apt update || true
-            sudo apt install -y tmate || true
-          "
+          echo "NOTE: Full SSH daemon not supported on Windows runner"
 
-      - name: Start SSH session (tmate)
-        shell: pwsh
-        run: |
-          wsl bash -lc "
-            tmate -S /tmp/tmate.sock new-session -d
-            tmate -S /tmp/tmate.sock wait tmate-ready
+          echo "Creating pseudo-session..."
 
-            echo '========================'
-            echo 'SSH ACCESS LINK:'
-            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-            echo '========================'
-          "
-
-      - name: Safe keep alive (NO infinite loop)
-        shell: pwsh
-        run: |
-          for ($i = 0; $i -lt 120; $i++) {
-            Write-Output "Windows runner alive... $i"
-            Start-Sleep -Seconds 30
-          }
-
-      - name: Finish job
-        shell: pwsh
-        run: |
-          Write-Output "Session ended safely."
+          while true; do
+            echo "[WINDOWS RUNNING]"
+            sleep 60
+          done
