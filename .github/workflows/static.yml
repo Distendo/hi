@@ -1,4 +1,4 @@
-name: Windows SSH Session
+name: Windows Stable SSH Session
 
 on:
   workflow_dispatch:
@@ -15,34 +15,41 @@ jobs:
           systeminfo
           whoami
 
-      - name: Install WSL tools (optional base shell)
+      - name: Install WSL (safe init)
         shell: pwsh
         run: |
-          Write-Output "Preparing environment..."
+          wsl --install -y || echo "WSL already installed"
 
-      - name: Install tmate via WSL
-        shell: pwsh
-        run: |
-          wsl --install -y || true
-
-      - name: Start SSH (via WSL tmate)
+      - name: Setup Linux environment in WSL
         shell: pwsh
         run: |
           wsl bash -lc "
             sudo apt update || true
             sudo apt install -y tmate || true
+          "
 
+      - name: Start SSH session (tmate)
+        shell: pwsh
+        run: |
+          wsl bash -lc "
             tmate -S /tmp/tmate.sock new-session -d
             tmate -S /tmp/tmate.sock wait tmate-ready
 
-            echo 'SSH URL:'
+            echo '========================'
+            echo 'SSH ACCESS LINK:'
             tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+            echo '========================'
           "
 
-      - name: Keep alive
+      - name: Safe keep alive (NO infinite loop)
         shell: pwsh
         run: |
-          while ($true) {
-            Write-Output 'Windows runner active...'
-            Start-Sleep -Seconds 60
+          for ($i = 0; $i -lt 120; $i++) {
+            Write-Output "Windows runner alive... $i"
+            Start-Sleep -Seconds 30
           }
+
+      - name: Finish job
+        shell: pwsh
+        run: |
+          Write-Output "Session ended safely."
