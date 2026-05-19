@@ -1,4 +1,4 @@
-name: Kali SSH Stable
+name: Kali Linux SSH
 
 on:
   workflow_dispatch:
@@ -9,11 +9,12 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Setup Kali environment
+      - name: Start Docker
         run: |
-          sudo apt update
-          sudo apt install -y docker.io
+          docker pull kalilinux/kali-rolling
 
+      - name: Run Kali container
+        run: |
           docker run -d --name kali \
             kalilinux/kali-rolling sleep infinity
 
@@ -21,10 +22,18 @@ jobs:
         run: |
           docker exec kali apt update
           docker exec kali apt install -y \
-            nmap netcat-traditional python3 git curl nano
+            nmap netcat-traditional curl wget git python3 nano
 
-      - name: Start interactive shell (tmate host)
-        uses: mxschmitt/action-tmate@v3
+      - name: Open SSH (tmate)
+        run: |
+          sudo apt update
+          sudo apt install -y tmate
+
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+
+          echo "SSH INTO KALI HOST:"
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
       - name: Keep alive
         run: |
