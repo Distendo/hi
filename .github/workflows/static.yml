@@ -1,4 +1,4 @@
-name: Windows SSH-like session
+name: Windows SSH Session
 
 on:
   workflow_dispatch:
@@ -6,14 +6,43 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
       - name: System info
-        run: systeminfo
+        shell: pwsh
+        run: |
+          systeminfo
+          whoami
 
-      - name: PowerShell session loop
+      - name: Install WSL tools (optional base shell)
+        shell: pwsh
+        run: |
+          Write-Output "Preparing environment..."
+
+      - name: Install tmate via WSL
+        shell: pwsh
+        run: |
+          wsl --install -y || true
+
+      - name: Start SSH (via WSL tmate)
+        shell: pwsh
+        run: |
+          wsl bash -lc "
+            sudo apt update || true
+            sudo apt install -y tmate || true
+
+            tmate -S /tmp/tmate.sock new-session -d
+            tmate -S /tmp/tmate.sock wait tmate-ready
+
+            echo 'SSH URL:'
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          "
+
+      - name: Keep alive
+        shell: pwsh
         run: |
           while ($true) {
-            Write-Output "Windows running..."
+            Write-Output 'Windows runner active...'
             Start-Sleep -Seconds 60
           }
