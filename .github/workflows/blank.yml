@@ -1,44 +1,44 @@
-name: Linux Container
+name: Kali SSH Clean
 
 on:
   workflow_dispatch:
 
 jobs:
-  container:
+  kali:
     runs-on: ubuntu-latest
-
-    container:
-      image: ubuntu:24.04
+    timeout-minutes: 360
 
     steps:
-      - name: Install packages
+      - name: System update (safe)
         run: |
-          apt update
-          apt install -y python3 nodejs npm curl git nano
+          sudo apt update
+          sudo apt install -y \
+            curl wget git nano tmux htop \
+            python3 python3-pip \
+            net-tools iproute2 \
+            openssh-client \
+            nmap netcat-openbsd
 
-      - name: System info
+      - name: Install tmate
         run: |
-          uname -a
-          whoami
-          pwd
-          ls
+          sudo apt install -y tmate
 
-      - name: Start backend
+      - name: Clean terminal
         run: |
-          mkdir server
-          cd server
+          touch ~/.hushlogin
+          clear
 
-          cat > server.py << 'EOF'
-          from http.server import HTTPServer, SimpleHTTPRequestHandler
+      - name: Start SSH (tmate clean)
+        run: |
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
 
-          class Handler(SimpleHTTPRequestHandler):
-              def do_GET(self):
-                  self.send_response(200)
-                  self.end_headers()
-                  self.wfile.write(b"GitHub Linux Container Running")
+          echo "SSH:"
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
-          EOF
-
-          python3 server.py &
-          sleep 300
+      - name: Keep alive
+        run: |
+          while true; do
+            echo "[KALI-LIKE ENV RUNNING]"
+            sleep 60
+          done
