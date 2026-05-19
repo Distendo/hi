@@ -1,0 +1,44 @@
+name: Linux Container
+
+on:
+  workflow_dispatch:
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+
+    container:
+      image: ubuntu:24.04
+
+    steps:
+      - name: Install packages
+        run: |
+          apt update
+          apt install -y python3 nodejs npm curl git nano
+
+      - name: System info
+        run: |
+          uname -a
+          whoami
+          pwd
+          ls
+
+      - name: Start backend
+        run: |
+          mkdir server
+          cd server
+
+          cat > server.py << 'EOF'
+          from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+          class Handler(SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b"GitHub Linux Container Running")
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+          EOF
+
+          python3 server.py &
+          sleep 300
