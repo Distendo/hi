@@ -1,0 +1,19 @@
+name: Windows SSH-like session
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: System info
+        run: systeminfo
+
+      - name: PowerShell session loop
+        run: |
+          while ($true) {
+            Write-Output "Windows running..."
+            Start-Sleep -Seconds 60
+          }
