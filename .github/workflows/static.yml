@@ -1,4 +1,4 @@
-name: Windows Clean Session
+name: Windows SSH (Working Method)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,6 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 360
 
     steps:
       - name: System info
@@ -15,24 +14,5 @@ jobs:
           systeminfo
           whoami
 
-      - name: Install tmate (via GitHub bash toolchain)
-        shell: bash
-        run: |
-          echo "Installing tmate via MSYS2 environment workaround..."
-
-          # GitHub Windows runners already include bash toolchain
-          curl -L -o tmate https://github.com/tmate-io/tmate/releases/latest/download/tmate-windows-amd64.exe || true
-
-          chmod +x tmate || true
-
-      - name: Start session (fallback safe mode)
-        shell: bash
-        run: |
-          echo "NOTE: Full SSH daemon not supported on Windows runner"
-
-          echo "Creating pseudo-session..."
-
-          while true; do
-            echo "[WINDOWS RUNNING]"
-            sleep 60
-          done
+      - name: Start SSH session
+        uses: mxschmitt/action-tmate@v3
