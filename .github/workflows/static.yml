@@ -1,18 +1,56 @@
-name: Windows SSH (Working Method)
+name: PowerShell Terminal (GitHub Hosted)
 
 on:
   workflow_dispatch:
 
 jobs:
-  windows:
+  ps-terminal:
     runs-on: windows-latest
 
     steps:
+      - name: System boot (PowerShell)
+        shell: pwsh
+        run: |
+          Write-Host "==========================="
+          Write-Host " POWERSHELL TERMINAL OS"
+          Write-Host " (GitHub Hosted Runner)"
+          Write-Host "==========================="
+
       - name: System info
         shell: pwsh
         run: |
-          systeminfo
-          whoami
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsHardwareAbstractionLayer
 
-      - name: Start SSH session
-        uses: mxschmitt/action-tmate@v3
+      - name: "Task Manager view"
+        shell: pwsh
+        run: |
+          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15
+
+      - name: Disk + memory
+        shell: pwsh
+        run: |
+          Get-PSDrive
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object FreePhysicalMemory, TotalVisibleMemorySize
+
+      - name: Network view
+        shell: pwsh
+        run: |
+          ipconfig
+          Get-NetTCPConnection | Select-Object -First 20
+
+      - name: Fake interactive shell
+        shell: pwsh
+        run: |
+          Write-Host "Entering shell mode..."
+          Write-Host "Type: help, ps, sys, net"
+
+          # simple pseudo-shell loop
+          for ($i=0; $i -lt 3; $i++) {
+            $cmd = Read-Host "PS-OS>"
+            if ($cmd -eq "ps") { Get-Process | Select-Object -First 5 }
+            elseif ($cmd -eq "sys") { Get-ComputerInfo | Select WindowsProductName }
+            elseif ($cmd -eq "net") { ipconfig }
+            elseif ($cmd -eq "exit") { break }
+            else { Write-Host "Unknown command" }
+          }
