@@ -1,4 +1,4 @@
-name: Kali Linux SSH Container
+name: Kali SSH Stable
 
 on:
   workflow_dispatch:
@@ -8,30 +8,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
-    container:
-      image: kalilinux/kali-rolling
-
     steps:
-      - name: Update Kali
+      - name: Setup Kali environment
         run: |
-          apt update
-          apt install -y \
-            sudo curl wget git nano tmux htop \
-            openssh-client net-tools iproute2 \
-            python3 python3-pip \
-            nmap netcat-traditional
+          sudo apt update
+          sudo apt install -y docker.io
 
-      - name: Clean terminal
+          docker run -d --name kali \
+            kalilinux/kali-rolling sleep infinity
+
+      - name: Install tools in Kali
         run: |
-          touch ~/.hushlogin
-          clear
+          docker exec kali apt update
+          docker exec kali apt install -y \
+            nmap netcat-traditional python3 git curl nano
 
-      - name: Start SSH (tmate)
+      - name: Start interactive shell (tmate host)
         uses: mxschmitt/action-tmate@v3
 
       - name: Keep alive
         run: |
           while true; do
-            echo "[KALI RUNNING]"
+            echo "Kali container running..."
             sleep 60
           done
