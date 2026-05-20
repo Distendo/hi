@@ -11,15 +11,18 @@ on:
         options:
           - ubuntu
           - arch
+          - debian
+          - alpine
+          - fedora
+          - kali
           - macos
           - windows
 
 jobs:
 
-  ######################################################################
-  # UBUNTU
-  ######################################################################
-
+  ####################################################################
+  # UBUNTU (native runner)
+  ####################################################################
   ubuntu:
     if: github.event.inputs.os == 'ubuntu'
     runs-on: ubuntu-latest
@@ -31,36 +34,22 @@ jobs:
       - name: Install tmate
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq tmate neofetch
+          sudo apt-get install -y tmate
 
       - name: Start tmate
         run: |
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
 
-      - name: Show SSH
-        run: |
-          echo "========== UBUNTU SSH =========="
+          echo "UBUNTU SSH:"
           tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-          echo ""
-          echo "========== UBUNTU WEB =========="
-          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
-          echo ""
-
-      - name: System info
-        run: |
-          neofetch || true
 
       - name: Keep alive
-        run: |
-          while true; do
-            sleep 60
-          done
+        run: sleep infinity
 
-  ######################################################################
+  ####################################################################
   # ARCH
-  ######################################################################
-
+  ####################################################################
   arch:
     if: github.event.inputs.os == 'arch'
     runs-on: ubuntu-latest
@@ -69,81 +58,202 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify Docker
-        run: |
-          docker --version
-
-      - name: Pull Arch
+      - name: Start Arch container
         run: |
           docker pull archlinux:latest
+          docker run -dit --name os archlinux:latest
 
-      - name: Create container
+      - name: Install tmate
         run: |
-          docker run -dit \
-            --name archbox \
-            --hostname ALDL \
-            --privileged \
-            archlinux:latest
-
-      - name: Install packages
-        run: |
-          docker exec archbox bash -c "
-            pacman -Sy --noconfirm archlinux-keyring &&
-            pacman -Syu --noconfirm &&
-            pacman -S --noconfirm \
-              tmate \
-              tmux \
-              openssh \
-              curl \
-              wget \
-              git \
-              nano \
-              vim \
-              htop \
-             
+          docker exec os bash -c "
+            pacman -Sy --noconfirm &&
+            pacman -S --noconfirm tmate
           "
 
-      - name: Start tmate in Arch
+      - name: Start tmate
         run: |
-          docker exec archbox bash -c "
+          docker exec -d os bash -c "
             tmate -S /tmp/tmate.sock new-session -d
           "
 
-      - name: Wait for tmate
+      - name: Wait tmate
         run: |
-          sleep 15
+          sleep 10
+          docker exec os bash -c "
+            tmate -S /tmp/tmate.sock wait tmate-ready
+          "
 
-      - name: Show Arch SSH
+      - name: Show SSH
         run: |
-          echo "=========== ARCH SSH ==========="
-
-          docker exec archbox bash -c "
+          echo "ARCH SSH:"
+          docker exec os bash -c "
             tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
           "
 
-          echo ""
-          echo "=========== ARCH WEB ==========="
+      - name: Keep alive
+        run: sleep infinity
 
-          docker exec archbox bash -c "
-            tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
+  ####################################################################
+  # DEBIAN
+  ####################################################################
+  debian:
+    if: github.event.inputs.os == 'debian'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker run -dit --name os debian:latest
+
+      - name: Install tmate
+        run: |
+          docker exec os bash -c "
+            apt-get update &&
+            apt-get install -y tmate
           "
 
-          echo ""
-
-      - name: Arch info
+      - name: Start tmate
         run: |
-          docker exec archbox neofetch || true
+          docker exec -d os bash -c "
+            tmate -S /tmp/tmate.sock new-session -d
+          "
+
+      - name: Wait
+        run: sleep 10
+
+      - name: Show SSH
+        run: |
+          docker exec os bash -c "
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          "
 
       - name: Keep alive
+        run: sleep infinity
+
+  ####################################################################
+  # ALPINE
+  ####################################################################
+  alpine:
+    if: github.event.inputs.os == 'alpine'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
         run: |
-          while true; do
-            sleep 60
-          done
+          docker run -dit --name os alpine:latest
 
-  ######################################################################
+      - name: Install tmate
+        run: |
+          docker exec os sh -c "
+            apk add --no-cache tmate
+          "
+
+      - name: Start tmate
+        run: |
+          docker exec -d os sh -c "
+            tmate -S /tmp/tmate.sock new-session -d
+          "
+
+      - name: Wait
+        run: sleep 10
+
+      - name: Show SSH
+        run: |
+          docker exec os sh -c "
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          "
+
+      - name: Keep alive
+        run: sleep infinity
+
+  ####################################################################
+  # FEDORA
+  ####################################################################
+  fedora:
+    if: github.event.inputs.os == 'fedora'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker run -dit --name os fedora:latest
+
+      - name: Install tmate
+        run: |
+          docker exec os bash -c "
+            dnf install -y tmate
+          "
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "
+            tmate -S /tmp/tmate.sock new-session -d
+          "
+
+      - name: Wait
+        run: sleep 10
+
+      - name: Show SSH
+        run: |
+          docker exec os bash -c "
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          "
+
+      - name: Keep alive
+        run: sleep infinity
+
+  ####################################################################
+  # KALI
+  ####################################################################
+  kali:
+    if: github.event.inputs.os == 'kali'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker run -dit --name os kalilinux/kali-rolling:latest
+
+      - name: Install tmate
+        run: |
+          docker exec os bash -c "
+            apt update &&
+            apt install -y tmate
+          "
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "
+            tmate -S /tmp/tmate.sock new-session -d
+          "
+
+      - name: Wait
+        run: sleep 10
+
+      - name: Show SSH
+        run: |
+          docker exec os bash -c "
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          "
+
+      - name: Keep alive
+        run: sleep infinity
+
+  ####################################################################
   # MACOS
-  ######################################################################
-
+  ####################################################################
   macos:
     if: github.event.inputs.os == 'macos'
     runs-on: macos-latest
@@ -152,10 +262,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install tools
-        run: |
-          brew update
-          brew install tmate neofetch
+      - name: Install tmate
+        run: brew install tmate
 
       - name: Start tmate
         run: |
@@ -164,48 +272,24 @@ jobs:
 
       - name: Show SSH
         run: |
-          echo "=========== MACOS SSH =========="
           tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-          echo ""
-          echo "=========== MACOS WEB =========="
-          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
-          echo ""
-
-      - name: System info
-        run: |
-          neofetch || true
 
       - name: Keep alive
-        run: |
-          while true; do
-            sleep 60
-          done
+        run: sleep infinity
 
-  ######################################################################
-  # WINDOWS
-  ######################################################################
-
+  ####################################################################
+  # WINDOWS (limited)
+  ####################################################################
   windows:
     if: github.event.inputs.os == 'windows'
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install OpenSSH
-        shell: powershell
-        run: |
-          choco install openssh -y
-
       - name: System info
         shell: powershell
-        run: |
-          systeminfo
+        run: systeminfo
 
       - name: Keep alive
         shell: powershell
-        run: |
-          while ($true) {
-            Start-Sleep -Seconds 60
-          }
+        run: Start-Sleep -Seconds 999999
