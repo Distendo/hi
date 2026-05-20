@@ -1,44 +1,118 @@
-name: Kali SSH Clean
+name: Windows 95 CI - Stable VNC Lab 
 
 on:
   workflow_dispatch:
+    inputs:
+      capture_duration:
+        default: '120'
+        type: string
+      fps:
+        default: '2'
+        type: string
+      polling_interval:
+        default: '2'
+        type: string
 
 jobs:
-  kali:
+  vnc-capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 10
 
     steps:
-      - name: System update (safe)
+      - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y \
-            curl wget git nano tmux htop \
-            python3 python3-pip \
-            net-tools iproute2 \
-            openssh-client \
-            nmap netcat-openbsd
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-i386 qemu-utils \
+            ffmpeg netcat-openbsd socat
 
-      - name: Install tmate
+      - name: Prepare disk
         run: |
-          sudo apt install -y tmate
+          qemu-img create -f qcow2 win95.img 500M
 
-      - name: Clean terminal
+      - name: Start QEMU (CLEAN VNC ONLY)
         run: |
-          touch ~/.hushlogin
-          clear
+          qemu-system-i386 \
+            -machine pc \
+            -cpu 486 \
+            -m 64 \
+            -hda win95.img \
+            -vga cirrus \
+            -vnc :0 \
+            -serial file:qemu_serial.log \
+            -boot c \
+            -pidfile qemu.pid &
+          
+          echo "QEMU_PID=$!" >> $GITHUB_ENV
 
-      - name: Start SSH (tmate clean)
+      - name: Wait for VNC (SAFE READY CHECK)
         run: |
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-
-          echo "SSH:"
-          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-
-      - name: Keep alive
-        run: |
-          while true; do
-            echo "[KALI-LIKE ENV RUNNING]"
-            sleep 60
+          for i in {1..30}; do
+            if nc -z localhost 5900; then
+              echo "VNC READY"
+              break
+            fi
+            echo "waiting VNC..."
+            sleep 1
           done
+
+      - name: Boot stabilization delay (IMPORTANT FIX)
+        run: |
+          echo "Waiting for Windows 95 GUI boot..."
+          sleep 40
+
+      - name: Frame capture engine (FIXED CORE)
+        run: |
+          DURATION=${{ github.event.inputs.capture_duration }}
+          INTERVAL=${{ github.event.inputs.polling_interval }}
+
+          mkdir -p frames
+          FRAME=0
+          START=$(date +%s)
+
+          while true; do
+            NOW=$(date +%s)
+            ELAPSED=$((NOW - START))
+
+            if [ $ELAPSED -ge $DURATION ]; then
+              break
+            fi
+
+            # SINGLE SOURCE CAPTURE (NO vncdotool, NO ffmpeg stream mode)
+            ffmpeg -y -f vnc -i localhost:0 \
+              -frames:v 1 \
+              frames/frame_$(printf "%05d" $FRAME).png 2>/dev/null
+
+            echo "frame $FRAME at ${ELAPSED}s"
+            FRAME=$((FRAME + 1))
+
+            sleep "$INTERVAL"
+          done
+
+      - name: Build video (STRICT ORDER)
+        run: |
+          ffmpeg -y \
+            -framerate ${{ github.event.inputs.fps }} \
+            -i frames/frame_%05d.png \
+            -c:v libx264 \
+            -pix_fmt yuv420p \
+            win95_boot.mp4
+
+      - name: Final frame
+        run: |
+          ffmpeg -y -f vnc -i localhost:0 -frames:v 1 final.png
+
+      - name: Shutdown QEMU
+        run: |
+          kill ${{ env.QEMU_PID }} 2>/dev/null || true
+          pkill qemu-system-i386 || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win95-stable
+          path: |
+            frames/
+            win95_boot.mp4
+            final.png
+            qemu_serial.log
