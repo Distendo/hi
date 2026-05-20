@@ -1,4 +1,4 @@
-name: Windows 95 CI - Fast Stable VNC Lab
+name: Windows 95 CI - Crash Proof VNC Lab
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Install dependencies (MINIMAL + FAST)
+      - name: Install dependencies (minimal stable set)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -30,7 +30,7 @@ jobs:
         run: |
           qemu-img create -f qcow2 win95.img 500M
 
-      - name: Start QEMU (VNC optimized)
+      - name: Start QEMU (stable VNC only)
         run: |
           qemu-system-i386 \
             -machine pc \
@@ -45,36 +45,33 @@ jobs:
           
           echo "QEMU_PID=$!" >> $GITHUB_ENV
 
-      - name: Wait for VNC
+      - name: Wait for VNC (hard guarantee)
         run: |
-          for i in {1..30}; do
-            nc -z localhost 5900 && echo "VNC READY" && break
+          echo "Waiting for VNC..."
+          for i in {1..40}; do
+            if nc -z localhost 5900; then
+              echo "VNC READY"
+              break
+            fi
             sleep 1
           done
 
-      - name: Boot stabilization (kept but optimized)
+      - name: Boot stabilization (safe fixed delay)
         run: |
-          sleep 35
+          sleep 40
 
-      - name: FAST frame capture engine (OPTIMIZED CORE)
+      - name: Frame capture engine (CRASH-PROOF MODE)
         run: |
+          mkdir -p frames
+
           DURATION=${{ github.event.inputs.capture_duration }}
           INTERVAL=${{ github.event.inputs.polling_interval }}
 
-          mkdir -p frames
           FRAME=0
           START=$(date +%s)
 
-          # 🔥 SINGLE ffmpeg STREAM PROCESS (KEY FIX)
-          ffmpeg -y -f vnc -i localhost:0 \
-            -vf fps=2 \
-            -compression_level 1 \
-            frames/frame_%05d.png &
-          
-          FFMPEG_PID=$!
-          echo "FFMPEG_PID=$FFMPEG_PID" >> $GITHUB_ENV
+          echo "Starting deterministic capture loop"
 
-          # LIGHT polling loop (NO heavy work)
           while true; do
             NOW=$(date +%s)
             ELAPSED=$((NOW - START))
@@ -83,32 +80,60 @@ jobs:
               break
             fi
 
-            echo "[RUNNING] ${ELAPSED}s"
+            FILE="frames/frame_$(printf "%05d" $FRAME).png"
+
+            # CRITICAL FIX: verify VNC before capture
+            if nc -z localhost 5900; then
+              ffmpeg -y -f vnc -i localhost:0 \
+                -frames:v 1 "$FILE" >/dev/null 2>&1
+
+              # VERIFY FILE EXISTS (CRASH PROOF PART)
+              if [ -s "$FILE" ]; then
+                echo "[OK] $FILE"
+              else
+                echo "[FAIL] frame $FRAME not captured"
+              fi
+            else
+              echo "[WAIT] VNC not ready"
+            fi
+
+            FRAME=$((FRAME + 1))
             sleep "$INTERVAL"
           done
 
-          kill $FFMPEG_PID 2>/dev/null || true
+          echo "Capture complete"
 
-      - name: Build video (FAST + SAFE ORDER)
+      - name: Validate frames (CRITICAL SAFETY CHECK)
+        run: |
+          COUNT=$(ls -1 frames/*.png 2>/dev/null | wc -l)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: No frames captured at all"
+            exit 1
+          fi
+
+          echo "Frames captured: $COUNT"
+
+      - name: Build video (SAFE ORDERED MODE)
         run: |
           ffmpeg -y \
             -framerate ${{ github.event.inputs.fps }} \
             -i frames/frame_%05d.png \
             -c:v libx264 \
-            -preset ultrafast \
             -pix_fmt yuv420p \
             win95_boot.mp4
 
-      - name: Final screenshot (FAST fallback chain)
+      - name: Final screenshot (guaranteed fallback chain)
         run: |
-          ffmpeg -y -f vnc -i localhost:0 -frames:v 1 final.png \
-          || cp $(ls frames/*.png | tail -1) final.png
+          LAST=$(ls -1 frames/frame_*.png 2>/dev/null | tail -1)
 
-      - name: Capture QEMU logs
-        run: |
-          cat qemu_serial.log || true > serial_dump.txt
+          if [ -n "$LAST" ]; then
+            cp "$LAST" final.png
+          else
+            ffmpeg -y -f vnc -i localhost:0 -frames:v 1 final.png || true
+          fi
 
-      - name: Shutdown QEMU (safe)
+      - name: Shutdown QEMU safely
         run: |
           kill ${{ env.QEMU_PID }} 2>/dev/null || true
           pkill qemu-system-i386 || true
@@ -116,10 +141,10 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: win95-fast-lab
+          name: win95-crash-proof
           path: |
             frames/*.png
             win95_boot.mp4
             final.png
-            serial_dump.txt
+            qemu_serial.log
           retention-days: 7
