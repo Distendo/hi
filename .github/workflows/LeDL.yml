@@ -554,30 +554,7 @@ jobs:
       - name: Save connection info
         shell: powershell
         run: |
-          @"
-==========================================
-WINDOWS 95 / WINDOWS VM WITH TMATE
-==========================================
-
-VNC CONNECTION (для просмотра экрана):
-  Порт: 5900 (localhost)
-  Пароль: нет
-
-SSH CONNECTION (если настроен внутри VM):
-  Порт: 2222 (localhost)
-  Логин: root
-  Пароль: (зависит от конфигурации)
-
-TMATE INSIDE VM:
-  1. Подключитесь к VM через VNC или SSH
-  2. Запустите: tmate new-session -d
-  3. Покажите SSH: tmate display -p '#{tmate_ssh}'
-
-Для доступа извне GitHub Actions:
-  Используйте ngrok или playit.gg для туннелирования портов
-
-==========================================
-"@ | Out-File -FilePath tmate_connection_info.txt
+          | Out-File -FilePath tmate_connection_info.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
