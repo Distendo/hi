@@ -1,4 +1,4 @@
-name: Windows 95 CI - Crash Proof VNC Lab
+name: Windows 95 CI - ZERO CRASH Mode
 
 on:
   workflow_dispatch:
@@ -6,71 +6,56 @@ on:
       capture_duration:
         default: '120'
         type: string
-      fps:
-        default: '2'
-        type: string
-      polling_interval:
+      interval:
         default: '2'
         type: string
 
 jobs:
-  vnc-capture:
+  capture:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Install dependencies (minimal stable set)
+      - name: Install dependencies (MINIMAL CORE)
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            qemu-system-i386 qemu-utils \
-            ffmpeg netcat-openbsd socat
+          sudo apt-get install -y qemu-system-i386 socat
 
-      - name: Prepare disk
+      - name: Create disk
         run: |
           qemu-img create -f qcow2 win95.img 500M
 
-      - name: Start QEMU (stable VNC only)
+      - name: Start QEMU (NO VNC, NO GRAPHICS NETWORK)
         run: |
           qemu-system-i386 \
             -machine pc \
             -cpu 486 \
             -m 64 \
             -hda win95.img \
-            -vga cirrus \
-            -vnc :0 \
-            -serial file:qemu_serial.log \
+            -vga std \
+            -display none \
+            -monitor unix:qemu.sock,server,nowait \
+            -serial file:qemu.log \
             -boot c \
             -pidfile qemu.pid &
           
           echo "QEMU_PID=$!" >> $GITHUB_ENV
 
-      - name: Wait for VNC (hard guarantee)
-        run: |
-          echo "Waiting for VNC..."
-          for i in {1..40}; do
-            if nc -z localhost 5900; then
-              echo "VNC READY"
-              break
-            fi
-            sleep 1
-          done
-
-      - name: Boot stabilization (safe fixed delay)
+      - name: Wait boot
         run: |
           sleep 40
 
-      - name: Frame capture engine (CRASH-PROOF MODE)
+      - name: ZERO-CRASH capture loop (QEMU screendump)
         run: |
           mkdir -p frames
 
           DURATION=${{ github.event.inputs.capture_duration }}
-          INTERVAL=${{ github.event.inputs.polling_interval }}
+          INTERVAL=${{ github.event.inputs.interval }}
 
-          FRAME=0
           START=$(date +%s)
+          FRAME=0
 
-          echo "Starting deterministic capture loop"
+          echo "Starting QEMU screendump capture..."
 
           while true; do
             NOW=$(date +%s)
@@ -80,71 +65,53 @@ jobs:
               break
             fi
 
-            FILE="frames/frame_$(printf "%05d" $FRAME).png"
+            FILE="frames/frame_$(printf "%05d" $FRAME).ppm"
 
-            # CRITICAL FIX: verify VNC before capture
-            if nc -z localhost 5900; then
-              ffmpeg -y -f vnc -i localhost:0 \
-                -frames:v 1 "$FILE" >/dev/null 2>&1
+            # 💣 CORE: QEMU internal screenshot command
+            echo "screendump $FILE" | socat - UNIX-CONNECT:qemu.sock
 
-              # VERIFY FILE EXISTS (CRASH PROOF PART)
-              if [ -s "$FILE" ]; then
-                echo "[OK] $FILE"
-              else
-                echo "[FAIL] frame $FRAME not captured"
-              fi
+            if [ -s "$FILE" ]; then
+              echo "[OK] $FILE"
             else
-              echo "[WAIT] VNC not ready"
+              echo "[FAIL] frame $FRAME"
             fi
 
             FRAME=$((FRAME + 1))
             sleep "$INTERVAL"
           done
 
-          echo "Capture complete"
-
-      - name: Validate frames (CRITICAL SAFETY CHECK)
+      - name: Convert frames to video (STABLE)
         run: |
-          COUNT=$(ls -1 frames/*.png 2>/dev/null | wc -l)
-
-          if [ "$COUNT" -eq 0 ]; then
-            echo "ERROR: No frames captured at all"
+          if ls frames/*.ppm 1>/dev/null 2>&1; then
+            ffmpeg -y \
+              -framerate 2 \
+              -i frames/frame_%05d.ppm \
+              -c:v libx264 \
+              -pix_fmt yuv420p \
+              win95.mp4
+          else
+            echo "No frames found"
             exit 1
           fi
 
-          echo "Frames captured: $COUNT"
-
-      - name: Build video (SAFE ORDERED MODE)
+      - name: Final screenshot
         run: |
-          ffmpeg -y \
-            -framerate ${{ github.event.inputs.fps }} \
-            -i frames/frame_%05d.png \
-            -c:v libx264 \
-            -pix_fmt yuv420p \
-            win95_boot.mp4
+          LAST=$(ls frames/*.ppm | tail -1)
+          cp "$LAST" final.ppm
 
-      - name: Final screenshot (guaranteed fallback chain)
+      - name: Shutdown QEMU
         run: |
-          LAST=$(ls -1 frames/frame_*.png 2>/dev/null | tail -1)
-
-          if [ -n "$LAST" ]; then
-            cp "$LAST" final.png
-          else
-            ffmpeg -y -f vnc -i localhost:0 -frames:v 1 final.png || true
-          fi
-
-      - name: Shutdown QEMU safely
-        run: |
-          kill ${{ env.QEMU_PID }} 2>/dev/null || true
+          echo "system_powerdown" | socat - UNIX-CONNECT:qemu.sock || true
+          kill ${{ env.QEMU_PID }} || true
           pkill qemu-system-i386 || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: win95-crash-proof
+          name: win95-zero-crash
           path: |
-            frames/*.png
-            win95_boot.mp4
-            final.png
-            qemu_serial.log
+            frames/*
+            win95.mp4
+            final.ppm
+            qemu.log
           retention-days: 7
