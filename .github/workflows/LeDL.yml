@@ -381,7 +381,7 @@ jobs:
         run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
       - name: Keep alive
-        run: sleep infinity
+        run: sleep 999999999999999h
 
 
 ###############################################################################
