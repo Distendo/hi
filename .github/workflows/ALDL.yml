@@ -43,9 +43,7 @@ jobs:
               vim \
               nano \
               htop \
-              neofetch \
               openssh \
-              tmux \
               tmate
           "
 
@@ -90,7 +88,7 @@ jobs:
           echo ""
 
           echo ""
-          echo "============= ALDL WEB SHELL ============"
+          echo "============= ALDL WEB SHELL (beta) ============"
 
           sudo docker exec archbox bash -c "
             tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
