@@ -100,7 +100,7 @@ jobs:
               nano \
               vim \
               htop \
-              neofetch
+             
           "
 
       - name: Start tmate in Arch
