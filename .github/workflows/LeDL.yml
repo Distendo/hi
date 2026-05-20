@@ -1,0 +1,401 @@
+name: LeDL
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Select OS"
+        required: true
+        default: ubuntu
+        type: choice
+        options:
+          - ubuntu
+          - arch
+          - debian
+          - alpine
+          - fedora
+          - kali
+          - macos
+          - windows
+
+jobs:
+
+###############################################################################
+# UBUNTU
+###############################################################################
+  ubuntu:
+    if: github.event.inputs.os == 'ubuntu'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install UPM (Ubuntu)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tmate
+
+      - name: Create UPM wrapper
+        run: |
+          cat << 'EOF' > upm.sh
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              sudo apt-get install -y "$PKG"
+              ;;
+            update)
+              sudo apt-get update -qq
+              ;;
+          esac
+          EOF
+
+          chmod +x upm.sh
+          sudo mv upm.sh /usr/local/bin/upm
+
+      - name: Start tmate
+        run: |
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+
+      - name: Show SSH
+        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# ARCH
+###############################################################################
+  arch:
+    if: github.event.inputs.os == 'arch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os archlinux:latest
+
+      - name: Install UPM (Arch)
+        run: |
+          docker exec os bash -c "
+            pacman -Sy --noconfirm
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              pacman -S --noconfirm "$PKG"
+              ;;
+            update)
+              pacman -Sy --noconfirm
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: |
+          docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: |
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# DEBIAN
+###############################################################################
+  debian:
+    if: github.event.inputs.os == 'debian'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os debian:latest
+
+      - name: Install UPM (Debian)
+        run: |
+          docker exec os bash -c "
+            apt-get update -qq
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apt-get install -y "$PKG"
+              ;;
+            update)
+              apt-get update -qq
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# ALPINE
+###############################################################################
+  alpine:
+    if: github.event.inputs.os == 'alpine'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os alpine:latest
+
+      - name: Install UPM (Alpine)
+        run: |
+          docker exec os sh -c "
+            apk add --no-cache bash
+          "
+
+          docker exec os sh -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/sh
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apk add --no-cache "$PKG"
+              ;;
+            update)
+              apk update
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os sh -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# FEDORA
+###############################################################################
+  fedora:
+    if: github.event.inputs.os == 'fedora'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os fedora:latest
+
+      - name: Install UPM (Fedora)
+        run: |
+          docker exec os bash -c "
+            dnf makecache
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              dnf install -y "$PKG"
+              ;;
+            update)
+              dnf makecache
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# KALI
+###############################################################################
+  kali:
+    if: github.event.inputs.os == 'kali'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os kalilinux/kali-rolling:latest
+
+      - name: Install UPM (Kali)
+        run: |
+          docker exec os bash -c "
+            apt-get update -qq
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apt-get install -y "$PKG"
+              ;;
+            update)
+              apt-get update -qq
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# MACOS
+###############################################################################
+  macos:
+    if: github.event.inputs.os == 'macos'
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install UPM (macOS)
+        run: |
+          brew install tmate
+
+          cat << 'EOF' > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              brew install "$PKG"
+              ;;
+            update)
+              brew update
+              ;;
+          esac
+          EOF
+
+          chmod +x /usr/local/bin/upm
+
+      - name: Start tmate
+        run: |
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+
+      - name: Show SSH
+        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# WINDOWS (no real package system layer)
+###############################################################################
+  windows:
+    if: github.event.inputs.os == 'windows'
+    runs-on: windows-latest
+
+    steps:
+      - name: System info
+        shell: powershell
+        run: systeminfo
+
+      - name: Keep alive
+        shell: powershell
+        run: Start-Sleep -Seconds 999999
