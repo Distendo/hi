@@ -12,19 +12,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Docker
+     
+      - name: Verify Docker
         run: |
-          sudo apt-get update
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
+          sudo docker --version
+          sudo docker info
 
       - name: Pull Arch Linux
         run: |
-          docker pull archlinux:latest
+          sudo docker pull archlinux:latest
 
       - name: Start privileged Arch container
         run: |
-          docker run -dit \
+          sudo docker run -dit \
             --name archbox \
             --hostname archbox \
             --privileged \
@@ -32,7 +32,7 @@ jobs:
 
       - name: Initialize Arch Linux
         run: |
-          docker exec archbox bash -c "
+          sudo docker exec archbox bash -c "
             pacman -Sy --noconfirm archlinux-keyring &&
             pacman -Syu --noconfirm &&
             pacman -S --noconfirm \
@@ -52,25 +52,25 @@ jobs:
 
       - name: Configure tmate inside Arch
         run: |
-          docker exec archbox bash -c "
+          sudo docker exec archbox bash -c "
             mkdir -p /root/.tmate
           "
 
       - name: Start internal tmate session
         run: |
-          docker exec -d archbox bash -c "
+          sudo docker exec -d archbox bash -c "
             tmate -F
           "
 
       - name: Wait for tmate socket
         run: |
           echo 'Waiting for internal Arch tmate...'
-          
+
           for i in {1..30}; do
-            docker exec archbox bash -c "
+            sudo docker exec archbox bash -c "
               tmate display -p '#{tmate_ssh}' >/dev/null 2>&1
             " && break
-            
+
             sleep 2
           done
 
@@ -78,27 +78,27 @@ jobs:
         run: |
           echo ""
           echo "=========== ARCH LINUX TMATE SSH ==========="
-          
-          docker exec archbox bash -c "
+
+          sudo docker exec archbox bash -c "
             tmate display -p '#{tmate_ssh}'
           "
-          
+
           echo "============================================"
           echo ""
 
           echo ""
           echo "=========== ARCH LINUX WEB SHELL ==========="
-          
-          docker exec archbox bash -c "
+
+          sudo docker exec archbox bash -c "
             tmate display -p '#{tmate_web}'
           "
-          
+
           echo "============================================"
           echo ""
 
       - name: Show system info
         run: |
-          docker exec archbox bash -c "
+          sudo docker exec archbox bash -c "
             echo '=== ARCH INFO ==='
             cat /etc/os-release
             echo
@@ -110,7 +110,7 @@ jobs:
       - name: Keep Arch container alive
         run: |
           echo "Arch Linux + internal tmate is running."
-          
+
           while true; do
             sleep 60
           done
