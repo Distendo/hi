@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y tmate
-          sudo snap install zellij
+          sudo snap install zellij --classic
 
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
