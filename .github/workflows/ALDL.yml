@@ -12,7 +12,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-     
       - name: Verify Docker
         run: |
           sudo docker --version
@@ -26,7 +25,7 @@ jobs:
         run: |
           sudo docker run -dit \
             --name archbox \
-            --hostname archbox \
+            --hostname ALDL \
             --privileged \
             archlinux:latest
 
@@ -44,61 +43,66 @@ jobs:
               vim \
               nano \
               htop \
+              neofetch \
               openssh \
               tmux \
               tmate
           "
 
-      - name: Configure tmate inside Arch
+      - name: Configure container
         run: |
           sudo docker exec archbox bash -c "
+            echo 'root:root' | chpasswd
             mkdir -p /root/.tmate
           "
 
       - name: Start internal tmate session
         run: |
           sudo docker exec -d archbox bash -c "
-            tmate -F
+            tmate -S /tmp/tmate.sock new-session -d
           "
 
-      - name: Wait for tmate socket
+      - name: Wait for tmate readiness
         run: |
-          echo 'Waiting for internal Arch tmate...'
+          echo 'Waiting for internal ALDL tmate session...'
 
           for i in {1..30}; do
-            sudo docker exec archbox bash -c "
-              tmate display -p '#{tmate_ssh}' >/dev/null 2>&1
-            " && break
+            if sudo docker exec archbox bash -c "
+              tmate -S /tmp/tmate.sock wait tmate-ready
+            "; then
+              echo "tmate ready"
+              break
+            fi
 
             sleep 2
           done
 
-      - name: Show Arch Linux SSH session
+      - name: Show ALDL SSH session
         run: |
           echo ""
-          echo "=========== ARCH LINUX TMATE SSH ==========="
+          echo "============== ALDL SSH ================="
 
           sudo docker exec archbox bash -c "
-            tmate display -p '#{tmate_ssh}'
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
           "
 
-          echo "============================================"
+          echo "========================================="
           echo ""
 
           echo ""
-          echo "=========== ARCH LINUX WEB SHELL ==========="
+          echo "============= ALDL WEB SHELL ============"
 
           sudo docker exec archbox bash -c "
-            tmate display -p '#{tmate_web}'
+            tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           "
 
-          echo "============================================"
+          echo "========================================="
           echo ""
 
-      - name: Show system info
+      - name: Show ALDL system info
         run: |
           sudo docker exec archbox bash -c "
-            echo '=== ARCH INFO ==='
+            echo '=== ALDL SYSTEM INFO ==='
             cat /etc/os-release
             echo
             uname -a
@@ -106,9 +110,9 @@ jobs:
             neofetch || true
           "
 
-      - name: Keep Arch container alive
+      - name: Keep ALDL alive
         run: |
-          echo "Arch Linux + internal tmate is running."
+          echo "ALDL Arch Linux environment is running."
 
           while true; do
             sleep 60
