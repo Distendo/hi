@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       os:
-        description: "Choose operating system"
+        description: "Select OS"
         required: true
-        default: "arch"
+        default: ubuntu
         type: choice
         options:
           - ubuntu
@@ -15,177 +15,197 @@ on:
           - windows
 
 jobs:
-  aldl:
-    name: ALDL-${{ github.event.inputs.os }}
 
-    runs-on: ${{ 
-      github.event.inputs.os == 'macos' && 'macos-latest' ||
-      github.event.inputs.os == 'windows' && 'windows-latest' ||
-      'ubuntu-latest'
-    }}
+  ######################################################################
+  # UBUNTU
+  ######################################################################
 
+  ubuntu:
+    if: github.event.inputs.os == 'ubuntu'
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      ####################################################################
-      # UBUNTU MODE
-      ####################################################################
-
-      - name: Ubuntu Mode
-        if: github.event.inputs.os == 'ubuntu'
+      - name: Install tmate
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tmate neofetch
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tmate neofetch
 
+      - name: Start tmate
+        run: |
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
 
-          echo ""
-          echo "============== UBUNTU SSH =============="
+      - name: Show SSH
+        run: |
+          echo "========== UBUNTU SSH =========="
           tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-          echo "========================================"
           echo ""
-
-          echo ""
-          echo "============= UBUNTU WEB ==============="
+          echo "========== UBUNTU WEB =========="
           tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
-          echo "========================================"
           echo ""
 
+      - name: System info
+        run: |
           neofetch || true
 
-      ####################################################################
-      # ARCH MODE
-      ####################################################################
+      - name: Keep alive
+        run: |
+          while true; do
+            sleep 60
+          done
+
+  ######################################################################
+  # ARCH
+  ######################################################################
+
+  arch:
+    if: github.event.inputs.os == 'arch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Verify Docker
-        if: github.event.inputs.os == 'arch'
         run: |
-          sudo docker --version
+          docker --version
 
-      - name: Pull Arch Linux
-        if: github.event.inputs.os == 'arch'
+      - name: Pull Arch
         run: |
-          sudo docker pull archlinux:latest
+          docker pull archlinux:latest
 
-      - name: Start Arch Container
-        if: github.event.inputs.os == 'arch'
+      - name: Create container
         run: |
-          sudo docker run -dit \
+          docker run -dit \
             --name archbox \
             --hostname ALDL \
             --privileged \
             archlinux:latest
 
-      - name: Setup Arch Linux
-        if: github.event.inputs.os == 'arch'
+      - name: Install packages
         run: |
-          sudo docker exec archbox bash -c "
+          docker exec archbox bash -c "
             pacman -Sy --noconfirm archlinux-keyring &&
             pacman -Syu --noconfirm &&
             pacman -S --noconfirm \
-              base-devel \
-              git \
+              tmate \
+              tmux \
+              openssh \
               curl \
               wget \
-              sudo \
-              vim \
+              git \
               nano \
+              vim \
               htop \
-              neofetch \
-              openssh \
-              tmux \
-              tmate
+              neofetch
           "
 
-      - name: Start Arch tmate
-        if: github.event.inputs.os == 'arch'
+      - name: Start tmate in Arch
         run: |
-          sudo docker exec -d archbox bash -c "
+          docker exec archbox bash -c "
             tmate -S /tmp/tmate.sock new-session -d
           "
 
-          sleep 10
+      - name: Wait for tmate
+        run: |
+          sleep 15
 
       - name: Show Arch SSH
-        if: github.event.inputs.os == 'arch'
         run: |
-          echo ""
-          echo "=============== ARCH SSH ==============="
+          echo "=========== ARCH SSH ==========="
 
-          sudo docker exec archbox bash -c "
+          docker exec archbox bash -c "
             tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
           "
 
-          echo "========================================"
           echo ""
+          echo "=========== ARCH WEB ==========="
 
-          echo ""
-          echo "=============== ARCH WEB ==============="
-
-          sudo docker exec archbox bash -c "
+          docker exec archbox bash -c "
             tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           "
 
-          echo "========================================"
           echo ""
 
-      ####################################################################
-      # MACOS MODE
-      ####################################################################
-
-      - name: macOS Mode
-        if: github.event.inputs.os == 'macos'
+      - name: Arch info
         run: |
-          brew install tmate neofetch || true
+          docker exec archbox neofetch || true
 
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-
-          echo ""
-          echo "=============== MACOS SSH =============="
-          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-          echo "========================================"
-          echo ""
-
-          echo ""
-          echo "=============== MACOS WEB =============="
-          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
-          echo "========================================"
-          echo ""
-
-          neofetch || true
-
-      ####################################################################
-      # WINDOWS MODE
-      ####################################################################
-
-      - name: Windows Mode
-        if: github.event.inputs.os == 'windows'
-        shell: powershell
+      - name: Keep alive
         run: |
-          choco install git -y
-          choco install openssh -y
-
-          Write-Host ""
-          Write-Host "=========== WINDOWS MODE ==========="
-          Write-Host "Interactive SSH is limited on GitHub Windows runners."
-          Write-Host "Use PowerShell commands directly in workflow."
-          Write-Host "===================================="
-
-          systeminfo
-
-      ####################################################################
-      # KEEP ALIVE
-      ####################################################################
-
-      - name: Keep ALDL Alive
-        run: |
-          echo "ALDL session active"
-
           while true; do
             sleep 60
           done
+
+  ######################################################################
+  # MACOS
+  ######################################################################
+
+  macos:
+    if: github.event.inputs.os == 'macos'
+    runs-on: macos-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          brew update
+          brew install tmate neofetch
+
+      - name: Start tmate
+        run: |
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+
+      - name: Show SSH
+        run: |
+          echo "=========== MACOS SSH =========="
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          echo ""
+          echo "=========== MACOS WEB =========="
+          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
+          echo ""
+
+      - name: System info
+        run: |
+          neofetch || true
+
+      - name: Keep alive
+        run: |
+          while true; do
+            sleep 60
+          done
+
+  ######################################################################
+  # WINDOWS
+  ######################################################################
+
+  windows:
+    if: github.event.inputs.os == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenSSH
+        shell: powershell
+        run: |
+          choco install openssh -y
+
+      - name: System info
+        shell: powershell
+        run: |
+          systeminfo
+
+      - name: Keep alive
+        shell: powershell
+        run: |
+          while ($true) {
+            Start-Sleep -Seconds 60
+          }
