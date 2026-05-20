@@ -22,12 +22,14 @@ jobs:
         run: |
           docker exec kali apt update
           docker exec kali apt install -y \
-            nmap netcat-traditional curl wget git python3 nano
+            nmap netcat-traditional curl wget git python3 nano 
+          
 
       - name: Open SSH (tmate)
         run: |
           sudo apt update
           sudo apt install -y tmate
+          sudo snap install zellij
 
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
