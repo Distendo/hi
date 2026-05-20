@@ -383,18 +383,211 @@ jobs:
       - name: Keep alive
         run: sleep 1000d
 
-
 ###############################################################################
-# WINDOWS (no real package system layer)
+# WINDOWS (with tmate via QEMU + Alpine + SSH forwarding)
 ###############################################################################
   windows:
     if: github.event.inputs.os == 'windows'
     runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
-      - name: System info
+      - name: Install QEMU and dependencies
         shell: powershell
-        run: systeminfo
+        run: |
+          choco install qemu -y
+          choco install wget -y
+          choco install msys2 -y
+
+      - name: Download Alpine Linux ISO
+        shell: powershell
+        run: |
+          wget https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-standard-3.19.1-x86_64.iso -OutFile alpine.iso
+
+      - name: Create disk image
+        shell: powershell
+        run: |
+          qemu-img create -f qcow2 alpine.qcow2 2G
+
+      - name: Start QEMU with Alpine and tmate
+        shell: powershell
+        run: |
+          Start-Process -NoNewWindow -FilePath "qemu-system-x86_64" -ArgumentList @(
+            "-machine", "pc",
+            "-cpu", "qemu64",
+            "-m", "512",
+            "-hda", "alpine.qcow2",
+            "-cdrom", "alpine.iso",
+            "-boot", "order=d",
+            "-vga", "cirrus",
+            "-vnc", ":0",
+            "-netdev", "user,id=net0,hostfwd=tcp::2222-:22",
+            "-device", "e1000,netdev=net0",
+            "-serial", "file:qemu_serial.log"
+          )
+          
+          Write-Host "QEMU started with Alpine Linux"
+          Write-Host "Waiting for system to boot..."
+          Start-Sleep -Seconds 60
+
+      - name: Setup tmate inside Alpine (via SSH)
+        shell: powershell
+        run: |
+          Write-Host "Waiting for SSH to become available..."
+          Start-Sleep -Seconds 30
+          
+          # Установка tmate через Alpine Linux (автоматический логин)
+          # Для реальной работы требуется предварительная настройка Alpine с SSH
+          Write-Host "=========================================="
+          Write-Host "WINDOWS VM WITH TMATE"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "Для получения SSH доступа к Windows VM:"
+          Write-Host ""
+          Write-Host "Способ 1 - Подключение через VNC:"
+          Write-Host "  В GitHub Actions НЕТ входящих соединений"
+          Write-Host "  Используйте outbound tunneling:"
+          Write-Host ""
+          Write-Host "  Скачайте ngrok: https://ngrok.com"
+          Write-Host "  Запустите: ngrok tcp 5900"
+          Write-Host "  Подключитесь к VNC через полученный URL"
+          Write-Host ""
+          Write-Host "Способ 2 - Установка tmate внутри Alpine (рекомендуется):"
+          Write-Host ""
+
+      - name: Download and run tmate on Windows directly (using MSYS2)
+        shell: powershell
+        run: |
+          # Скачивание tmate для Windows
+          $tmate_url = "https://github.com/tmate-io/tmate/releases/download/2.4.0/tmate-2.4.0-static-windows-amd64.exe"
+          $tmate_path = "$env:TEMP\tmate.exe"
+          
+          Invoke-WebRequest -Uri $tmate_url -OutFile $tmate_path
+          
+          # Запуск tmate и вывод SSH строки
+          Write-Host "Starting tmate on Windows..."
+          Write-Host ""
+          
+          # tmate требует консоль, используем Start-Process с перенаправлением
+          $script = @'
+          $env:TMATE_SOCK = "C:\tmate.sock"
+          & "$env:TEMP\tmate.exe" -S $env:TMATE_SOCK new-session -d
+          Start-Sleep -Seconds 5
+          & "$env:TEMP\tmate.exe" -S $env:TMATE_SOCK wait tmate-ready
+          & "$env:TEMP\tmate.exe" -S $env:TMATE_SOCK display -p '#{tmate_ssh}'
+          '@
+          
+          $script_path = "$env:TEMP\run_tmate.ps1"
+          $script | Out-File -FilePath $script_path -Encoding ASCII
+          
+          # Запуск и захват вывода
+          $output = & powershell.exe -ExecutionPolicy Bypass -File $script_path 2>&1
+          
+          Write-Host "=========================================="
+          Write-Host "TMATE SSH CONNECTION (Windows):"
+          Write-Host "=========================================="
+          Write-Host $output
+          Write-Host ""
+          
+          # Сохраняем SSH строку в файл для artifacts
+          $output | Out-File -FilePath tmate_windows.txt
+
+      - name: Alternative - Use ngrok for RDP/VNC (manual)
+        shell: powershell
+        run: |
+          Write-Host "=========================================="
+          Write-Host "ALTERNATIVE: ngrok tunneling"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "1. Создайте аккаунт на ngrok.com"
+          Write-Host "2. Добавьте токен в GitHub Secrets: NGROK_AUTH_TOKEN"
+          Write-Host ""
+          Write-Host "Для автоматического туннеля, добавьте:"
+          Write-Host ""
+          Write-Host "```yaml"
+          Write-Host "- name: ngrok tunnel"
+          Write-Host "  run: |"
+          Write-Host "    wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
+          Write-Host "    unzip ngrok-v3-stable-windows-amd64.zip"
+          Write-Host "    ./ngrok config add-authtoken `${{ secrets.NGROK_AUTH_TOKEN }}"
+          Write-Host "    ./ngrok tcp 3389 --log=ngrok.log &"
+          Write-Host "```"
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "CURRENT TMATE SSH WINDOWS:"
+          Write-Host "=========================================="
+          
+          if (Test-Path tmate_windows.txt) {
+            Get-Content tmate_windows.txt
+          } else {
+            Write-Host "tmate не запустился на Windows напрямую"
+            Write-Host "Используйте Alpine VM внутри QEMU для tmate"
+          }
+
+      - name: Setup tmate inside QEMU (Alpine VM with networking)
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ALPINE LINUX INSIDE QEMU - TMATE SETUP"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "Чтобы получить tmate внутри виртуальной машины:"
+          Write-Host ""
+          Write-Host "1. Подключитесь к Alpine через VNC (5900 порт)"
+          Write-Host "2. Войдите как root (без пароля)"
+          Write-Host "3. Выполните: apk add tmate"
+          Write-Host "4. Запустите: tmate new-session -d"
+          Write-Host "5. Получите SSH: tmate display -p '#{tmate_ssh}'"
+          Write-Host ""
+          Write-Host "ИЛИ автоматически через SSH forward:"
+          Write-Host ""
+          Write-Host "```bash"
+          Write-Host "# В другом терминале:"
+          Write-Host "ssh -p 2222 root@localhost  # после настройки SSH в Alpine"
+          Write-Host "apk add tmate"
+          Write-Host "tmate new-session -d"
+          Write-Host "tmate display -p '#{tmate_ssh}'"
+          Write-Host "```"
+          Write-Host ""
+
+      - name: Save connection info
+        shell: powershell
+        run: |
+          @"
+==========================================
+WINDOWS 95 / WINDOWS VM WITH TMATE
+==========================================
+
+VNC CONNECTION (для просмотра экрана):
+  Порт: 5900 (localhost)
+  Пароль: нет
+
+SSH CONNECTION (если настроен внутри VM):
+  Порт: 2222 (localhost)
+  Логин: root
+  Пароль: (зависит от конфигурации)
+
+TMATE INSIDE VM:
+  1. Подключитесь к VM через VNC или SSH
+  2. Запустите: tmate new-session -d
+  3. Покажите SSH: tmate display -p '#{tmate_ssh}'
+
+Для доступа извне GitHub Actions:
+  Используйте ngrok или playit.gg для туннелирования портов
+
+==========================================
+"@ | Out-File -FilePath tmate_connection_info.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tmate-info
+          path: |
+            tmate_connection_info.txt
+            tmate_windows.txt
+            qemu_serial.log
+          retention-days: 7
 
       - name: Keep alive
         shell: powershell
