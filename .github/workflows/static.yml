@@ -1,56 +1,148 @@
-name: PowerShell Terminal (GitHub Hosted)
+name: ALDL macOS Remote X11
 
 on:
   workflow_dispatch:
+    inputs:
+      user_ip:
+        description: "94.20.67.0"
+        required: true
+        default: "127.0.0.1"
 
 jobs:
-  ps-terminal:
-    runs-on: windows-latest
+  remote-x11:
+    runs-on: macos-latest
+    timeout-minutes: 360
 
     steps:
-      - name: System boot (PowerShell)
-        shell: pwsh
-        run: |
-          Write-Host "==========================="
-          Write-Host " POWERSHELL TERMINAL OS"
-          Write-Host " (GitHub Hosted Runner)"
-          Write-Host "==========================="
 
+      #########################################################################
+      # CHECKOUT
+      #########################################################################
+      - uses: actions/checkout@v4
+
+      #########################################################################
+      # INSTALL XQUARTZ + X11 APPS
+      #########################################################################
+      - name: Install packages
+        run: |
+          brew install --cask xquartz
+
+          brew install \
+            xterm \
+            xeyes \
+            mesa
+
+      #########################################################################
+      # SHOW INFO
+      #########################################################################
+      - name: Show info
+        run: |
+          echo ""
+          echo "========================================="
+          echo "        ALDL macOS REMOTE X11"
+          echo "========================================="
+          echo ""
+
+          echo "Target DISPLAY:"
+          echo "${{ github.event.inputs.user_ip }}:0"
+          echo ""
+
+      #########################################################################
+      # TEST TCP 6000
+      #########################################################################
+      - name: Test X11 port
+        run: |
+          echo "Testing X11 connection..."
+
+          if nc -zv ${{ github.event.inputs.user_ip }} 6000; then
+            echo ""
+            echo "SUCCESS: Port 6000 reachable"
+          else
+            echo ""
+            echo "ERROR: Cannot connect to X11"
+            echo ""
+            echo "You must:"
+            echo "1. Start XQuartz locally"
+            echo "2. Enable:"
+            echo "   Preferences -> Security"
+            echo "   Allow connections from network clients"
+            echo "3. Run locally:"
+            echo "   xhost +"
+            echo "4. Open TCP port 6000"
+            exit 1
+          fi
+
+      #########################################################################
+      # EXPORT DISPLAY
+      #########################################################################
+      - name: Export DISPLAY
+        run: |
+          echo "DISPLAY=${{ github.event.inputs.user_ip }}:0" >> $GITHUB_ENV
+
+      #########################################################################
+      # DISPLAY CHECK
+      #########################################################################
+      - name: Display info
+        run: |
+          export DISPLAY=${{ github.event.inputs.user_ip }}:0
+
+          echo "DISPLAY=$DISPLAY"
+
+      #########################################################################
+      # OPEN XTERM
+      #########################################################################
+      - name: Launch xterm
+        run: |
+          export DISPLAY=${{ github.event.inputs.user_ip }}:0
+
+          echo "Launching xterm..."
+
+          timeout 20 xterm || true
+
+      #########################################################################
+      # OPEN XEYES
+      #########################################################################
+      - name: Launch xeyes
+        run: |
+          export DISPLAY=${{ github.event.inputs.user_ip }}:0
+
+          timeout 20 xeyes || true
+
+      #########################################################################
+      # OPEN GLXGEARS
+      #########################################################################
+      - name: Launch GLX gears
+        run: |
+          export DISPLAY=${{ github.event.inputs.user_ip }}:0
+
+          timeout 20 glxgears || true
+
+      #########################################################################
+      # SYSTEM INFO
+      #########################################################################
       - name: System info
-        shell: pwsh
         run: |
-          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsHardwareAbstractionLayer
+          echo ""
+          echo "========================================="
+          echo "SYSTEM INFO"
+          echo "========================================="
+          echo ""
 
-      - name: "Task Manager view"
-        shell: pwsh
+          sw_vers
+
+          echo ""
+          uname -a
+
+          echo ""
+          df -h
+
+      #########################################################################
+      # KEEP RUNNER ALIVE
+      #########################################################################
+      - name: Keep alive
         run: |
-          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15
-
-      - name: Disk + memory
-        shell: pwsh
-        run: |
-          Get-PSDrive
-          Get-CimInstance Win32_OperatingSystem |
-            Select-Object FreePhysicalMemory, TotalVisibleMemorySize
-
-      - name: Network view
-        shell: pwsh
-        run: |
-          ipconfig
-          Get-NetTCPConnection | Select-Object -First 20
-
-      - name: Fake interactive shell
-        shell: pwsh
-        run: |
-          Write-Host "Entering shell mode..."
-          Write-Host "Type: help, ps, sys, net"
-
-          # simple pseudo-shell loop
-          for ($i=0; $i -lt 3; $i++) {
-            $cmd = Read-Host "PS-OS>"
-            if ($cmd -eq "ps") { Get-Process | Select-Object -First 5 }
-            elseif ($cmd -eq "sys") { Get-ComputerInfo | Select WindowsProductName }
-            elseif ($cmd -eq "net") { ipconfig }
-            elseif ($cmd -eq "exit") { break }
-            else { Write-Host "Unknown command" }
-          }
+          while true; do
+            echo "ALDL macOS X11 RUNNING"
+            date
+            sleep 60
+          done
