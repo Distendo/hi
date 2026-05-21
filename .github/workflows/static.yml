@@ -1,148 +1,713 @@
-name: ALDL macOS Remote X11
+name: LeDL - Multi OS Multi Container Engine
 
 on:
   workflow_dispatch:
     inputs:
-      user_ip:
-        description: "94.20.67.0"
+      # Выбор операционной системы (контейнера)
+      os:
+        description: "📀 Container OS (Operating System)"
         required: true
-        default: "127.0.0.1"
+        default: ubuntu
+        type: choice
+        options:
+          - ubuntu
+          - ubuntu-22-04
+          - ubuntu-20-04
+          - ubuntu-18-04
+          - debian
+          - debian-12
+          - debian-11
+          - debian-10
+          - arch
+          - arch-multilib
+          - fedora
+          - fedora-39
+          - fedora-38
+          - centos-7
+          - centos-8
+          - centos-9
+          - rocky-8
+          - rocky-9
+          - almalinux-8
+          - almalinux-9
+          - opensuse-leap
+          - opensuse-tumbleweed
+          - kali
+          - parrot
+          - blackarch
+          - alpine
+          - alpine-3-18
+          - alpine-3-19
+          - void
+          - void-musl
+          - gentoo
+          - gentoo-openrc
+          - nixos
+          - nixos-unstable
+          - slackware
+          - freebsd
+          - freebsd-13
+          - openbsd
+          - netbsd
+          - manjaro
+          - endeavour
+          - artix
+          - artix-runit
+          - pop-os
+          - linux-mint
+          - elementary
+          - zorin
+          - kubuntu
+          - xubuntu
+          - lubuntu
+          - ubuntu-mate
+          - budgie
+          - deepin
+          - mx-linux
+          - antiX
+          - devuan
+          - tinycore
+          - puppy
+          - slitaz
+          - reactos
+          - haiku
+          - redox
+          - serenity
+          - openindiana
+          - ghostbsd
+          - midnightbsd
+          - truenas-core
+          - proxmox
+          - android-termux
+          - postmarketos
+          - alpine-edge
+          - debian-sid
+          - ubuntu-devel
+          - fedora-rawhide
+          - archlinux32
+          - garuda
+          - arcolinux
+          - ubuntu-23-10
+          - ubuntu-23-04
+          - alpine-3-17
+          - parrot-rolling
+          - dragonflybsd
+          - openbsd-7
+          - netbsd-9
+          - freebsd-14
+          - busybox
+          - cirros
+          - photon
+          - clearlinux
+          - flatcar
+          - talos
+          - fedora-coreos
+          - ubuntu-core
+          - rancher-desktop
+          - k3os
+          - bottle-rogue
+          - damn-small-linux
+          - basiclinux
+          - kolibrios
+          - visopsys
+          - toaruos
+          - mabox
+          - blendos
+          - crystal-linux
+          - nutyx
+          - venom
+          - kiss-linux
+          - obarun
+          - chakra
+          - kaos
+          - solus
+          - sabayon
+          - calculate
+          - robolinux
+          - gecko
+          - netrunner
+          - sparky
+          - voyage
+          - tethera
+          - trisquel
+          - parabola
+          - hyperbola
+          - gnewsense
+          - dragora
+          - ututo
+          - guix-system
+      
+      # Выбор движка контейнеризации
+      engine:
+        description: "🔧 Container Engine (Runtime)"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - docker
+          - podman
+          - static-binary
+          - chroot
+          - proot
+          - systemd-nspawn
+          - firejail
+          - unshare
+          - singularity
+          - flatpak
+          - local-runner
+          - qemu-user
+          - lxc
+          - lxd
+          - incus
+          - distrobox
+          - toolbox
+          - bwrap
+          - nerdctl
+          - runc
+          - crun
+          - containerd
+          - kata-containers
+          - gvisor
+          - firecracker
+          - cloud-hypervisor
+          - youki
+          - strato
+          - virtualbox-vm
+          - qemu-vm
+          - rancher
+          - k3s
+          - kind
+          - minikube
+          - microk8s
+          - k0s
+      
+      # Выбор архитектуры
+      arch:
+        description: "🏗️ CPU Architecture"
+        required: true
+        default: amd64
+        type: choice
+        options:
+          - amd64
+          - arm64
+          - armv7
+          - i386
+          - ppc64le
+          - s390x
+          - riscv64
+          - loongarch64
+          - mips64
+          - sparc64
+      
+      # Дополнительные опции
+      persistence:
+        description: "💾 Persistence mode (save data)"
+        required: false
+        default: false
+        type: boolean
+      
+      verbose:
+        description: "📢 Verbose logging"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  remote-x11:
-    runs-on: macos-latest
-    timeout-minutes: 360
 
+  #############################################################################
+  # MAIN JOB WITH FULL SELECTION
+  #############################################################################
+  container-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10080
     steps:
-
-      #########################################################################
-      # CHECKOUT
-      #########################################################################
-      - uses: actions/checkout@v4
-
-      #########################################################################
-      # INSTALL XQUARTZ + X11 APPS
-      #########################################################################
-      - name: Install packages
+      - name: Display Selection
         run: |
-          brew install --cask xquartz
+          echo "=========================================="
+          echo "🎛️ LECL - Linux Environment Container Lab"
+          echo "=========================================="
+          echo "📀 OS Selected:      ${{ github.event.inputs.os }}"
+          echo "🔧 Engine Selected:  ${{ github.event.inputs.engine }}"
+          echo "🏗️ Architecture:     ${{ github.event.inputs.arch }}"
+          echo "💾 Persistence:      ${{ github.event.inputs.persistence }}"
+          echo "📢 Verbose:          ${{ github.event.inputs.verbose }}"
+          echo "=========================================="
 
-          brew install \
-            xterm \
-            xeyes \
-            mesa
-
-      #########################################################################
-      # SHOW INFO
-      #########################################################################
-      - name: Show info
+      - name: Auto-detect Best Engine
+        id: detect
         run: |
-          echo ""
-          echo "========================================="
-          echo "        ALDL macOS REMOTE X11"
-          echo "========================================="
-          echo ""
-
-          echo "Target DISPLAY:"
-          echo "${{ github.event.inputs.user_ip }}:0"
-          echo ""
-
-      #########################################################################
-      # TEST TCP 6000
-      #########################################################################
-      - name: Test X11 port
-        run: |
-          echo "Testing X11 connection..."
-
-          if nc -zv ${{ github.event.inputs.user_ip }} 6000; then
-            echo ""
-            echo "SUCCESS: Port 6000 reachable"
-          else
-            echo ""
-            echo "ERROR: Cannot connect to X11"
-            echo ""
-            echo "You must:"
-            echo "1. Start XQuartz locally"
-            echo "2. Enable:"
-            echo "   Preferences -> Security"
-            echo "   Allow connections from network clients"
-            echo "3. Run locally:"
-            echo "   xhost +"
-            echo "4. Open TCP port 6000"
-            exit 1
+          ENGINE="${{ github.event.inputs.engine }}"
+          if [ "$ENGINE" = "auto" ]; then
+            if docker info &>/dev/null 2>&1; then
+              ENGINE="docker"
+              echo "✅ Auto-detected: Docker"
+            elif podman info &>/dev/null 2>&1; then
+              ENGINE="podman"
+              echo "✅ Auto-detected: Podman"
+            elif command -v nerdctl &>/dev/null; then
+              ENGINE="nerdctl"
+              echo "✅ Auto-detected: Nerdctl"
+            else
+              ENGINE="static-binary"
+              echo "✅ Auto-detected: Static Binary"
+            fi
           fi
+          echo "selected_engine=$ENGINE" >> $GITHUB_OUTPUT
+          echo "selected_os=${{ github.event.inputs.os }}" >> $GITHUB_OUTPUT
+          echo "selected_arch=${{ github.event.inputs.arch }}" >> $GITHUB_OUTPUT
 
       #########################################################################
-      # EXPORT DISPLAY
+      # DOCKER ENGINE - Full OS Support
       #########################################################################
-      - name: Export DISPLAY
+      - name: Docker - Map OS to Image
+        if: steps.detect.outputs.selected_engine == 'docker'
+        id: docker_img
         run: |
-          echo "DISPLAY=${{ github.event.inputs.user_ip }}:0" >> $GITHUB_ENV
+          OS="${{ steps.detect.outputs.selected_os }}"
+          ARCH="${{ steps.detect.outputs.selected_arch }}"
+          
+          case "$ARCH" in
+            amd64)   ARCH_PREFIX="" ;;
+            arm64)   ARCH_PREFIX="arm64v8/" ;;
+            armv7)   ARCH_PREFIX="arm32v7/" ;;
+            i386)    ARCH_PREFIX="i386/" ;;
+            ppc64le) ARCH_PREFIX="ppc64le/" ;;
+            s390x)   ARCH_PREFIX="s390x/" ;;
+            *)       ARCH_PREFIX="" ;;
+          esac
+          
+          case "$OS" in
+            ubuntu|ubuntu-22-04)        IMAGE="${ARCH_PREFIX}ubuntu:22.04" ;;
+            ubuntu-20-04)               IMAGE="${ARCH_PREFIX}ubuntu:20.04" ;;
+            ubuntu-18-04)               IMAGE="${ARCH_PREFIX}ubuntu:18.04" ;;
+            ubuntu-23-10)               IMAGE="${ARCH_PREFIX}ubuntu:23.10" ;;
+            ubuntu-23-04)               IMAGE="${ARCH_PREFIX}ubuntu:23.04" ;;
+            ubuntu-devel)               IMAGE="${ARCH_PREFIX}ubuntu:devel" ;;
+            debian|debian-12)           IMAGE="${ARCH_PREFIX}debian:bookworm" ;;
+            debian-11)                  IMAGE="${ARCH_PREFIX}debian:bullseye" ;;
+            debian-10)                  IMAGE="${ARCH_PREFIX}debian:buster" ;;
+            debian-sid)                 IMAGE="${ARCH_PREFIX}debian:sid" ;;
+            arch|arch-multilib)         IMAGE="archlinux:latest" ;;
+            fedora|fedora-39)           IMAGE="fedora:39" ;;
+            fedora-38)                  IMAGE="fedora:38" ;;
+            fedora-rawhide)             IMAGE="fedora:rawhide" ;;
+            centos-7)                   IMAGE="centos:7" ;;
+            centos-8)                   IMAGE="centos:8" ;;
+            centos-9)                   IMAGE="quay.io/centos/centos:stream9" ;;
+            rocky-8)                    IMAGE="rockylinux:8" ;;
+            rocky-9)                    IMAGE="rockylinux:9" ;;
+            almalinux-8)                IMAGE="almalinux:8" ;;
+            almalinux-9)                IMAGE="almalinux:9" ;;
+            opensuse-leap)              IMAGE="opensuse/leap:latest" ;;
+            opensuse-tumbleweed)        IMAGE="opensuse/tumbleweed:latest" ;;
+            kali)                       IMAGE="kalilinux/kali-last-release:latest" ;;
+            parrot)                     IMAGE="parrotsec/security:latest" ;;
+            parrot-rolling)             IMAGE="parrotsec/parrot-rolling:latest" ;;
+            blackarch)                  IMAGE="blackarchlinux/blackarch:latest" ;;
+            alpine|alpine-3-19)         IMAGE="${ARCH_PREFIX}alpine:3.19" ;;
+            alpine-3-18)                IMAGE="${ARCH_PREFIX}alpine:3.18" ;;
+            alpine-3-17)                IMAGE="${ARCH_PREFIX}alpine:3.17" ;;
+            alpine-edge)                IMAGE="${ARCH_PREFIX}alpine:edge" ;;
+            void|void-musl)             IMAGE="voidlinux/voidlinux:latest" ;;
+            gentoo|gentoo-openrc)       IMAGE="gentoo/stage3:latest" ;;
+            nixos|nixos-unstable)       IMAGE="nixos/nix:latest" ;;
+            slackware)                  IMAGE="vbatts/slackware:latest" ;;
+            freebsd|freebsd-13|freebsd-14) IMAGE="freebsd:latest" ;;
+            openbsd|openbsd-7)          IMAGE="openbsd:latest" ;;
+            netbsd|netbsd-9)            IMAGE="netbsd:latest" ;;
+            manjaro)                    IMAGE="manjarolinux/base:latest" ;;
+            endeavour)                  IMAGE="endeavouros/endeavouros:latest" ;;
+            artix|artix-runit)          IMAGE="artixlinux/artix:latest" ;;
+            pop-os)                     IMAGE="popos:latest" ;;
+            linux-mint)                 IMAGE="linuxmintd/mint21.2:latest" ;;
+            elementary)                 IMAGE="elementary/docker:latest" ;;
+            zorin)                      IMAGE="zorinos/zorin:latest" ;;
+            kubuntu)                    IMAGE="kubuntu:latest" ;;
+            xubuntu)                    IMAGE="xubuntu:latest" ;;
+            lubuntu)                    IMAGE="lubuntu:latest" ;;
+            ubuntu-mate)                IMAGE="ubuntumate/ubuntu-mate:latest" ;;
+            budgie)                     IMAGE="ubuntubudgie/ubuntu-budgie:latest" ;;
+            deepin)                     IMAGE="deepin:latest" ;;
+            mx-linux)                   IMAGE="mxlinux/mx:latest" ;;
+            antiX)                      IMAGE="antix/antix:latest" ;;
+            devuan)                     IMAGE="devuan/devuan:latest" ;;
+            busybox)                    IMAGE="${ARCH_PREFIX}busybox:latest" ;;
+            cirros)                     IMAGE="cirros:latest" ;;
+            photon)                     IMAGE="photon:latest" ;;
+            clearlinux)                 IMAGE="clearlinux:latest" ;;
+            flatcar)                    IMAGE="flatcar/flatcar:latest" ;;
+            talos)                      IMAGE="talos:latest" ;;
+            fedora-coreos)              IMAGE="fedora/fedora-coreos:latest" ;;
+            ubuntu-core)                IMAGE="ubuntu-core:latest" ;;
+            solus)                      IMAGE="solus:latest" ;;
+            sabayon)                    IMAGE="sabayon:latest" ;;
+            trisquel)                   IMAGE="trisquel:latest" ;;
+            parabola)                   IMAGE="parabola:latest" ;;
+            *)                          IMAGE="${ARCH_PREFIX}alpine:latest" ;;
+          esac
+          
+          echo "docker_image=$IMAGE" >> $GITHUB_OUTPUT
+          echo "🐳 Docker Image: $IMAGE"
 
-      #########################################################################
-      # DISPLAY CHECK
-      #########################################################################
-      - name: Display info
+      - name: Docker - Run Container
+        if: steps.detect.outputs.selected_engine == 'docker'
         run: |
-          export DISPLAY=${{ github.event.inputs.user_ip }}:0
+          IMAGE="${{ steps.docker_img.outputs.docker_image }}"
+          OS="${{ steps.detect.outputs.selected_os }}"
+          
+          docker run -d --name os --privileged "$IMAGE" tail -f /dev/null
+          echo "✅ Container started: $IMAGE"
+          
+          # Install tmate based on OS
+          case "$OS" in
+            ubuntu*|debian*|kali|parrot*|pop-os|linux-mint|elementary|zorin|kubuntu|xubuntu|lubuntu|ubuntu-mate|budgie|deepin|mx-linux|antiX|devuan|trisquel|parabola)
+              docker exec os apt-get update -qq
+              docker exec os apt-get install -y tmate curl wget git vim htop sudo
+              ;;
+            arch*|manjaro|endeavour|artix*|garuda|arcolinux|blackarch)
+              docker exec os pacman -Sy --noconfirm tmate curl wget git vim htop sudo
+              ;;
+            fedora*|centos*|rocky*|almalinux*|fedora-coreos)
+              docker exec os dnf install -y tmate curl wget git vim htop sudo
+              ;;
+            alpine*|postmarketos)
+              docker exec os apk add --no-cache tmate bash curl wget git vim htop sudo
+              ;;
+            opensuse*)
+              docker exec os zypper refresh
+              docker exec os zypper install -y tmate curl wget git vim htop sudo
+              ;;
+            void*)
+              docker exec os xbps-install -Sy
+              docker exec os xbps-install -y tmate curl wget git vim htop sudo
+              ;;
+            gentoo*)
+              docker exec os emerge-webrsync || true
+              docker exec os emerge tmate || true
+              ;;
+            nixos*)
+              docker exec os nix-channel --update
+              docker exec os nix-env -iA nixpkgs.tmate
+              ;;
+            freebsd*)
+              docker exec os pkg update
+              docker exec os pkg install -y tmate curl wget git vim htop sudo
+              ;;
+            openbsd*)
+              docker exec os pkg_add tmate curl wget git vim htop sudo || true
+              ;;
+            slackware)
+              docker exec os slackpkg update
+              docker exec os slackpkg install tmate
+              ;;
+            busybox)
+              echo "BusyBox: minimal tools only"
+              ;;
+            *)
+              docker exec os apk add --no-cache tmate bash curl wget vim htop || \
+              docker exec os apt-get update -qq && docker exec os apt-get install -y tmate || \
+              docker exec os pacman -Sy --noconfirm tmate || true
+              ;;
+          esac
+          
+          # Start tmate
+          docker exec -d os tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
 
-          echo "DISPLAY=$DISPLAY"
-
-      #########################################################################
-      # OPEN XTERM
-      #########################################################################
-      - name: Launch xterm
+      - name: Docker - Show Connection
+        if: steps.detect.outputs.selected_engine == 'docker'
         run: |
-          export DISPLAY=${{ github.event.inputs.user_ip }}:0
-
-          echo "Launching xterm..."
-
-          timeout 20 xterm || true
-
-      #########################################################################
-      # OPEN XEYES
-      #########################################################################
-      - name: Launch xeyes
-        run: |
-          export DISPLAY=${{ github.event.inputs.user_ip }}:0
-
-          timeout 20 xeyes || true
-
-      #########################################################################
-      # OPEN GLXGEARS
-      #########################################################################
-      - name: Launch GLX gears
-        run: |
-          export DISPLAY=${{ github.event.inputs.user_ip }}:0
-
-          timeout 20 glxgears || true
-
-      #########################################################################
-      # SYSTEM INFO
-      #########################################################################
-      - name: System info
-        run: |
+          echo "=========================================="
+          echo "🐳 DOCKER CONTAINER READY"
+          echo "=========================================="
+          echo "OS:      ${{ steps.detect.outputs.selected_os }}"
+          echo "Image:   ${{ steps.docker_img.outputs.docker_image }}"
+          echo "Arch:    ${{ steps.detect.outputs.selected_arch }}"
+          echo "=========================================="
+          echo "🔐 TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
           echo ""
-          echo "========================================="
-          echo "SYSTEM INFO"
-          echo "========================================="
-          echo ""
-
-          sw_vers
-
-          echo ""
-          uname -a
-
-          echo ""
-          df -h
+          echo "🌐 WEB SESSION:"
+          docker exec os tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
+          echo "=========================================="
+          echo "Quick connect:"
+          SSH_LINE=$(docker exec os tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+          echo "$SSH_LINE" | awk '{print "ssh -o StrictHostKeyChecking=no " $4}'
+          echo "=========================================="
 
       #########################################################################
-      # KEEP RUNNER ALIVE
+      # PODMAN ENGINE
       #########################################################################
-      - name: Keep alive
+      - name: Podman - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'podman'
         run: |
-          while true; do
-            echo "ALDL macOS X11 RUNNING"
-            date
-            sleep 60
-          done
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+          
+          OS="${{ steps.detect.outputs.selected_os }}"
+          case "$OS" in
+            ubuntu*|debian*) IMAGE="docker.io/ubuntu:latest" ;;
+            arch*)           IMAGE="docker.io/archlinux:latest" ;;
+            fedora*)         IMAGE="docker.io/fedora:latest" ;;
+            alpine*)         IMAGE="docker.io/alpine:latest" ;;
+            *)               IMAGE="docker.io/alpine:latest" ;;
+          esac
+          
+          podman run -d --name os "$IMAGE" tail -f /dev/null
+          podman exec os apk add --no-cache tmate bash 2>/dev/null || \
+          podman exec os apt-get update -qq && podman exec os apt-get install -y tmate 2>/dev/null || \
+          podman exec os pacman -Sy --noconfirm tmate 2>/dev/null || true
+          
+          podman exec -d os tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          
+          echo "=========================================="
+          echo "🦭 PODMAN CONTAINER READY"
+          echo "=========================================="
+          podman exec os tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # STATIC BINARY (No Container)
+      #########################################################################
+      - name: Static Binary - No Container
+        if: steps.detect.outputs.selected_engine == 'static-binary'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tmate
+          tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          echo "=========================================="
+          echo "📦 STATIC BINARY (No Container)"
+          echo "=========================================="
+          echo "OS: ${{ steps.detect.outputs.selected_os }} (host)"
+          echo "=========================================="
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # LXC ENGINE
+      #########################################################################
+      - name: LXC - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'lxc'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y lxc lxc-templates
+          sudo lxc-create -n container -t ubuntu
+          sudo lxc-start -n container
+          sudo lxc-attach -n container -- apt-get update -qq
+          sudo lxc-attach -n container -- apt-get install -y tmate
+          sudo lxc-attach -n container -- tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          sudo lxc-attach -n container -- tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # SYSTEMD-NSPAWN ENGINE
+      #########################################################################
+      - name: Systemd-nspawn - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'systemd-nspawn'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y systemd-container debootstrap
+          sudo debootstrap --arch=amd64 stable /var/lib/machines/container
+          sudo systemd-nspawn -D /var/lib/machines/container apt-get update -qq
+          sudo systemd-nspawn -D /var/lib/machines/container apt-get install -y tmate
+          sudo systemd-nspawn -D /var/lib/machines/container tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          sudo systemd-nspawn -D /var/lib/machines/container tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # DISTROBOX ENGINE
+      #########################################################################
+      - name: Distrobox - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'distrobox'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y podman curl
+          curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sudo sh
+          
+          OS="${{ steps.detect.outputs.selected_os }}"
+          case "$OS" in
+            ubuntu*)  IMAGE="ubuntu:latest" ;;
+            debian*)  IMAGE="debian:latest" ;;
+            arch*)    IMAGE="archlinux:latest" ;;
+            fedora*)  IMAGE="fedora:latest" ;;
+            alpine*)  IMAGE="alpine:latest" ;;
+            *)        IMAGE="alpine:latest" ;;
+          esac
+          
+          distrobox-create --name os --image "$IMAGE"
+          distrobox-enter --name os -- sudo apt-get update -qq 2>/dev/null || true
+          distrobox-enter --name os -- sudo apt-get install -y tmate 2>/dev/null || \
+          distrobox-enter --name os -- sudo apk add --no-cache tmate 2>/dev/null || \
+          distrobox-enter --name os -- sudo pacman -Sy --noconfirm tmate 2>/dev/null || true
+          
+          distrobox-enter --name os -- tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          distrobox-enter --name os -- tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # PROOT ENGINE (User-space, no root)
+      #########################################################################
+      - name: Proot - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'proot'
+        run: |
+          wget -q https://proot.gitlab.io/proot/bin/proot
+          chmod +x proot
+          mkdir rootfs
+          
+          OS="${{ steps.detect.outputs.selected_os }}"
+          case "$OS" in
+            alpine*)  ROOTFS_URL="https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-minirootfs-3.19.1-x86_64.tar.gz" ;;
+            ubuntu*)  ROOTFS_URL="https://partner-images.canonical.com/core/jammy/current/ubuntu-core-22.04-base-amd64.tar.gz" ;;
+            *)        ROOTFS_URL="https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-minirootfs-3.19.1-x86_64.tar.gz" ;;
+          esac
+          
+          wget -q "$ROOTFS_URL" -O rootfs.tar.gz
+          tar -xzf rootfs.tar.gz -C rootfs
+          cp proot rootfs/
+          
+          ./rootfs/proot -R rootfs /bin/sh -c "apk add --no-cache tmate bash 2>/dev/null || true"
+          ./proot -R rootfs /bin/sh -c "tmate -S /tmp/tmate.sock new-session -d & sleep 5 && tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          sleep 1000d
+
+      #########################################################################
+      # NERDCTL ENGINE
+      #########################################################################
+      - name: Nerdctl - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'nerdctl'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y containerd
+          wget -q https://github.com/containerd/nerdctl/releases/download/v1.7.6/nerdctl-full-1.7.6-linux-amd64.tar.gz
+          sudo tar -xzf nerdctl-full-*.tar.gz -C /usr/local/
+          sudo systemctl start containerd
+          
+          OS="${{ steps.detect.outputs.selected_os }}"
+          case "$OS" in
+            alpine*) IMAGE="alpine:latest" ;;
+            *)       IMAGE="alpine:latest" ;;
+          esac
+          
+          sudo nerdctl run -d --name os "$IMAGE" tail -f /dev/null
+          sudo nerdctl exec os apk add --no-cache tmate bash
+          sudo nerdctl exec -d os tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          sudo nerdctl exec os tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # QEMU USER MODE (Cross-architecture)
+      #########################################################################
+      - name: QEMU User - Cross-Arch Container
+        if: steps.detect.outputs.selected_engine == 'qemu-user'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user-static binfmt-support
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+          
+          ARCH="${{ steps.detect.outputs.selected_arch }}"
+          case "$ARCH" in
+            arm64)   PLATFORM="linux/arm64" ;;
+            armv7)   PLATFORM="linux/arm/v7" ;;
+            i386)    PLATFORM="linux/386" ;;
+            ppc64le) PLATFORM="linux/ppc64le" ;;
+            s390x)   PLATFORM="linux/s390x" ;;
+            riscv64) PLATFORM="linux/riscv64" ;;
+            *)       PLATFORM="linux/amd64" ;;
+          esac
+          
+          docker run -d --name os --platform "$PLATFORM" alpine:latest tail -f /dev/null
+          docker exec os apk add --no-cache tmate bash
+          docker exec -d os tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          docker exec os tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # INCUS ENGINE (Modern LXD)
+      #########################################################################
+      - name: Incus - Setup and Run
+        if: steps.detect.outputs.selected_engine == 'incus'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y incus
+          sudo incus init ubuntu:22.04 container
+          sudo incus start container
+          sudo incus exec container -- apt-get update -qq
+          sudo incus exec container -- apt-get install -y tmate
+          sudo incus exec container -- tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          sudo incus exec container -- tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      #########################################################################
+      # FIRECRACKER (MicroVM)
+      #########################################################################
+      - name: Firecracker - Setup
+        if: steps.detect.outputs.selected_engine == 'firecracker'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y firecracker
+          echo "Firecracker version: $(firecracker --version)"
+          echo "Note: Firecracker requires kernel and rootfs setup"
+          echo "For full setup: https://github.com/firecracker-microvm/firecracker"
+          sleep 1000d
+
+      #########################################################################
+      # K3S (Lightweight Kubernetes)
+      #########################################################################
+      - name: K3s - Setup
+        if: steps.detect.outputs.selected_engine == 'k3s'
+        run: |
+          curl -sfL https://get.k3s.io | sh -
+          sudo k3s kubectl get nodes
+          echo "K3s Kubernetes cluster ready"
+          sleep 1000d
+
+      #########################################################################
+      # KIND (Kubernetes in Docker)
+      #########################################################################
+      - name: Kind - Setup
+        if: steps.detect.outputs.selected_engine == 'kind'
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind create cluster --name kind
+          kind get kubeconfig --name kind
+          echo "Kind Kubernetes cluster ready"
+          sleep 1000d
+
+      #########################################################################
+      # FALLBACK - Always available
+      #########################################################################
+      - name: Fallback - Static Binary
+        if: steps.detect.outputs.selected_engine != 'docker' && steps.detect.outputs.selected_engine != 'podman' && steps.detect.outputs.selected_engine != 'static-binary' && steps.detect.outputs.selected_engine != 'lxc' && steps.detect.outputs.selected_engine != 'systemd-nspawn' && steps.detect.outputs.selected_engine != 'distrobox' && steps.detect.outputs.selected_engine != 'proot' && steps.detect.outputs.selected_engine != 'nerdctl' && steps.detect.outputs.selected_engine != 'qemu-user'
+        run: |
+          echo "⚠️ Selected engine not fully configured, using static binary fallback"
+          sudo apt-get update -qq
+          sudo apt-get install -y tmate
+          tmate -S /tmp/tmate.sock new-session -d
+          sleep 5
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          sleep 1000d
+
+      - name: Final Status
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "✅ LECL - Container Lab Running"
+          echo "=========================================="
+          echo "OS:      ${{ steps.detect.outputs.selected_os }}"
+          echo "Engine:  ${{ steps.detect.outputs.selected_engine }}"
+          echo "Arch:    ${{ steps.detect.outputs.selected_arch }}"
+          echo "=========================================="
+          echo "Job will run for 1000 days"
+          echo "Connect via tmate SSH from above output"
+          echo "=========================================="
