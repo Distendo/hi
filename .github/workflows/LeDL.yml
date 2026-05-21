@@ -1,4 +1,4 @@
-name: LeDL
+name: ALDL
 
 on:
   workflow_dispatch:
@@ -31,15 +31,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install UPM (Ubuntu)
+      #########################################################################
+      # INSTALL CORE
+      #########################################################################
+      - name: Install packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tmate
 
-      - name: Create UPM wrapper
+          sudo apt-get install -y \
+            tmate \
+            xterm \
+            xvfb \
+            xauth \
+            x11-apps \
+            fluxbox
+
+      #########################################################################
+      # CREATE UNIVERSAL PACKAGE MANAGER
+      #########################################################################
+      - name: Create UPM
         run: |
-          cat << 'EOF' > upm.sh
+          cat << 'EOF' > upm
           #!/bin/bash
+
           CMD=$1
           PKG=$2
 
@@ -50,23 +64,121 @@ jobs:
             update)
               sudo apt-get update -qq
               ;;
+            remove)
+              sudo apt-get remove -y "$PKG"
+              ;;
+            *)
+              echo "UPM Commands:"
+              echo "upm install <pkg>"
+              echo "upm remove <pkg>"
+              echo "upm update"
+              ;;
           esac
           EOF
 
-          chmod +x upm.sh
-          sudo mv upm.sh /usr/local/bin/upm
+          chmod +x upm
 
+          sudo mv upm /usr/local/bin/upm
+
+      #########################################################################
+      # START X11 SERVER
+      #########################################################################
+      - name: Start X11
+        run: |
+          export DISPLAY=:99
+
+          Xvfb :99 -screen 0 1280x720x24 &
+          sleep 3
+
+          fluxbox &
+          sleep 2
+
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      #########################################################################
+      # CREATE X11 APPLICATION LAUNCHER
+      #########################################################################
+      - name: Create ALDL-X
+        run: |
+          cat << 'EOF' > aldl-x
+          #!/bin/bash
+
+          export DISPLAY=:99
+
+          APP="$1"
+
+          if [ -z "$APP" ]; then
+            echo "Usage:"
+            echo "aldl-x xterm"
+            exit 1
+          fi
+
+          nohup "$APP" >/tmp/aldl-x.log 2>&1 &
+          echo "Started: $APP"
+          EOF
+
+          chmod +x aldl-x
+
+          sudo mv aldl-x /usr/local/bin/aldl-x
+
+      #########################################################################
+      # START TMATE
+      #########################################################################
       - name: Start tmate
         run: |
           tmate -S /tmp/tmate.sock new-session -d
+
+          sleep 5
+
           tmate -S /tmp/tmate.sock wait tmate-ready
 
-      - name: Show SSH
-        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          echo ""
+          echo "=========== ALDL SSH ==========="
+          echo ""
 
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+
+          echo ""
+          echo "================================"
+
+      #########################################################################
+      # START DEFAULT XTERM
+      #########################################################################
+      - name: Start xterm
+        run: |
+          export DISPLAY=:99
+          aldl-x xterm
+
+      #########################################################################
+      # SYSTEM INFO
+      #########################################################################
+      - name: System info
+        run: |
+          echo "Kernel:"
+          uname -a
+
+          echo ""
+          echo "Docker:"
+          docker --version || true
+
+          echo ""
+          echo "Memory:"
+          free -h
+
+          echo ""
+          echo "Disk:"
+          df -h
+
+      #########################################################################
+      # KEEP RUNNER ALIVE
+      #########################################################################
       - name: Keep alive
-        run: sleep infinity
-
+        run: |
+          while true; do
+            echo "ALDL RUNNING"
+            date
+            sleep 60
+          done
 
 ###############################################################################
 # ARCH
@@ -79,20 +191,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start container
+      - name: Start Arch container
         run: |
-          docker rm -f os || true
-          docker run -dit --name os archlinux:latest
+          docker rm -f aldl || true
 
-      - name: Install UPM (Arch)
+          docker run -dit \
+            --name aldl \
+            archlinux:latest \
+            bash
+
+      - name: Install system
         run: |
-          docker exec os bash -c "
-            pacman -Sy --noconfirm
+          docker exec aldl bash -c "
+            pacman -Sy --noconfirm &&
+            pacman -S --noconfirm \
+              tmate \
+              xterm \
+              xorg-xauth \
+              xorg-server-xvfb \
+              xorg-xhost \
+              fluxbox
           "
 
-          docker exec os bash -c '
+      - name: Create UPM
+        run: |
+          docker exec aldl bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
+
           CMD=$1
           PKG=$2
 
@@ -100,30 +226,77 @@ jobs:
             install)
               pacman -S --noconfirm "$PKG"
               ;;
+            remove)
+              pacman -R --noconfirm "$PKG"
+              ;;
             update)
               pacman -Sy --noconfirm
               ;;
           esac
           EOF
+
           chmod +x /usr/local/bin/upm
           '
 
-      - name: Install tmate via UPM
+      - name: Start X11
         run: |
-          docker exec os upm install tmate
+          docker exec -d aldl bash -c "
+            export DISPLAY=:99
+            Xvfb :99 -screen 0 1280x720x24 &
+            sleep 2
+            fluxbox &
+          "
+
+      - name: Create ALDL-X
+        run: |
+          docker exec aldl bash -c '
+          cat << "EOF" > /usr/local/bin/aldl-x
+          #!/bin/bash
+
+          export DISPLAY=:99
+
+          APP="$1"
+
+          nohup "$APP" >/tmp/aldl-x.log 2>&1 &
+          EOF
+
+          chmod +x /usr/local/bin/aldl-x
+          '
 
       - name: Start tmate
         run: |
-          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          docker exec -d aldl bash -c "
+            tmate -S /tmp/tmate.sock new-session -d
+          "
+
           sleep 5
 
       - name: Show SSH
         run: |
-          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "=========== ALDL ARCH SSH ==========="
+          echo ""
+
+          docker exec aldl bash -c "
+            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          "
+
+          echo ""
+          echo "====================================="
+
+      - name: Start xterm
+        run: |
+          docker exec aldl bash -c "
+            export DISPLAY=:99
+            aldl-x xterm
+          "
 
       - name: Keep alive
-        run: sleep infinity
-
+        run: |
+          while true; do
+            echo "ARCH RUNNING"
+            sleep 60
+          done
 
 ###############################################################################
 # DEBIAN
@@ -133,51 +306,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Start container
-        run: |
-          docker rm -f os || true
-          docker run -dit --name os debian:latest
-
-      - name: Install UPM (Debian)
-        run: |
-          docker exec os bash -c "
-            apt-get update -qq
-          "
-
-          docker exec os bash -c '
-          cat << "EOF" > /usr/local/bin/upm
-          #!/bin/bash
-          CMD=$1
-          PKG=$2
-
-          case "$CMD" in
-            install)
-              apt-get install -y "$PKG"
-              ;;
-            update)
-              apt-get update -qq
-              ;;
-          esac
-          EOF
-          chmod +x /usr/local/bin/upm
-          '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
-
-      - name: Start tmate
-        run: |
-          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
-          sleep 5
-
-      - name: Show SSH
-        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
-
-      - name: Keep alive
-        run: sleep infinity
-
+      - run: echo "Debian profile placeholder"
 
 ###############################################################################
 # ALPINE
@@ -187,51 +316,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Start container
-        run: |
-          docker rm -f os || true
-          docker run -dit --name os alpine:latest
-
-      - name: Install UPM (Alpine)
-        run: |
-          docker exec os sh -c "
-            apk add --no-cache bash
-          "
-
-          docker exec os sh -c '
-          cat << "EOF" > /usr/local/bin/upm
-          #!/bin/sh
-          CMD=$1
-          PKG=$2
-
-          case "$CMD" in
-            install)
-              apk add --no-cache "$PKG"
-              ;;
-            update)
-              apk update
-              ;;
-          esac
-          EOF
-          chmod +x /usr/local/bin/upm
-          '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
-
-      - name: Start tmate
-        run: |
-          docker exec -d os sh -c "tmate -S /tmp/tmate.sock new-session -d"
-          sleep 5
-
-      - name: Show SSH
-        run: docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
-
-      - name: Keep alive
-        run: sleep infinity
-
+      - run: echo "Alpine profile placeholder"
 
 ###############################################################################
 # FEDORA
@@ -241,51 +326,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Start container
-        run: |
-          docker rm -f os || true
-          docker run -dit --name os fedora:latest
-
-      - name: Install UPM (Fedora)
-        run: |
-          docker exec os bash -c "
-            dnf makecache
-          "
-
-          docker exec os bash -c '
-          cat << "EOF" > /usr/local/bin/upm
-          #!/bin/bash
-          CMD=$1
-          PKG=$2
-
-          case "$CMD" in
-            install)
-              dnf install -y "$PKG"
-              ;;
-            update)
-              dnf makecache
-              ;;
-          esac
-          EOF
-          chmod +x /usr/local/bin/upm
-          '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
-
-      - name: Start tmate
-        run: |
-          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
-          sleep 5
-
-      - name: Show SSH
-        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
-
-      - name: Keep alive
-        run: sleep infinity
-
+      - run: echo "Fedora profile placeholder"
 
 ###############################################################################
 # KALI
@@ -295,51 +336,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Start container
-        run: |
-          docker rm -f os || true
-          docker run -dit --name os kalilinux/kali-rolling:latest
-
-      - name: Install UPM (Kali)
-        run: |
-          docker exec os bash -c "
-            apt-get update -qq
-          "
-
-          docker exec os bash -c '
-          cat << "EOF" > /usr/local/bin/upm
-          #!/bin/bash
-          CMD=$1
-          PKG=$2
-
-          case "$CMD" in
-            install)
-              apt-get install -y "$PKG"
-              ;;
-            update)
-              apt-get update -qq
-              ;;
-          esac
-          EOF
-          chmod +x /usr/local/bin/upm
-          '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
-
-      - name: Start tmate
-        run: |
-          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
-          sleep 5
-
-      - name: Show SSH
-        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
-
-      - name: Keep alive
-        run: sleep infinity
-
+      - run: echo "Kali profile placeholder"
 
 ###############################################################################
 # MACOS
@@ -349,223 +346,51 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install UPM (macOS)
+      - name: Install packages
         run: |
-          brew install tmate
-
-          cat << 'EOF' > /usr/local/bin/upm
-          #!/bin/bash
-          CMD=$1
-          PKG=$2
-
-          case "$CMD" in
-            install)
-              brew install "$PKG"
-              ;;
-            update)
-              brew update
-              ;;
-          esac
-          EOF
-
-          chmod +x /usr/local/bin/upm
+          brew install tmate xterm
 
       - name: Start tmate
         run: |
           tmate -S /tmp/tmate.sock new-session -d
+
+          sleep 5
+
           tmate -S /tmp/tmate.sock wait tmate-ready
 
-      - name: Show SSH
-        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          echo ""
+          echo "=========== ALDL MACOS SSH ==========="
+          echo ""
+
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+
+          echo ""
+          echo "======================================"
 
       - name: Keep alive
-        run: sleep 1000d
+        run: |
+          while true; do
+            echo "MACOS RUNNING"
+            sleep 60
+          done
 
 ###############################################################################
-# WINDOWS (with tmate via QEMU + Alpine + SSH forwarding)
+# WINDOWS
 ###############################################################################
   windows:
     if: github.event.inputs.os == 'windows'
     runs-on: windows-latest
-    timeout-minutes: 360
 
     steps:
-      - name: Install QEMU and dependencies
+      - name: System info
         shell: powershell
         run: |
-          choco install qemu -y
-          choco install wget -y
-          choco install msys2 -y
-
-      - name: Download Alpine Linux ISO
-        shell: powershell
-        run: |
-          wget https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-standard-3.19.1-x86_64.iso -OutFile alpine.iso
-
-      - name: Create disk image
-        shell: powershell
-        run: |
-          qemu-img create -f qcow2 alpine.qcow2 2G
-
-      - name: Start QEMU with Alpine and tmate
-        shell: powershell
-        run: |
-          Start-Process -NoNewWindow -FilePath "qemu-system-x86_64" -ArgumentList @(
-            "-machine", "pc",
-            "-cpu", "qemu64",
-            "-m", "512",
-            "-hda", "alpine.qcow2",
-            "-cdrom", "alpine.iso",
-            "-boot", "order=d",
-            "-vga", "cirrus",
-            "-vnc", ":0",
-            "-netdev", "user,id=net0,hostfwd=tcp::2222-:22",
-            "-device", "e1000,netdev=net0",
-            "-serial", "file:qemu_serial.log"
-          )
-          
-          Write-Host "QEMU started with Alpine Linux"
-          Write-Host "Waiting for system to boot..."
-          Start-Sleep -Seconds 60
-
-      - name: Setup tmate inside Alpine (via SSH)
-        shell: powershell
-        run: |
-          Write-Host "Waiting for SSH to become available..."
-          Start-Sleep -Seconds 30
-          
-          # Установка tmate через Alpine Linux (автоматический логин)
-          # Для реальной работы требуется предварительная настройка Alpine с SSH
-          Write-Host "=========================================="
-          Write-Host "WINDOWS VM WITH TMATE"
-          Write-Host "=========================================="
-          Write-Host ""
-          Write-Host "Для получения SSH доступа к Windows VM:"
-          Write-Host ""
-          Write-Host "Способ 1 - Подключение через VNC:"
-          Write-Host "  В GitHub Actions НЕТ входящих соединений"
-          Write-Host "  Используйте outbound tunneling:"
-          Write-Host ""
-          Write-Host "  Скачайте ngrok: https://ngrok.com"
-          Write-Host "  Запустите: ngrok tcp 5900"
-          Write-Host "  Подключитесь к VNC через полученный URL"
-          Write-Host ""
-          Write-Host "Способ 2 - Установка tmate внутри Alpine (рекомендуется):"
-          Write-Host ""
-
-      - name: Download and run tmate on Windows directly (using MSYS2)
-        shell: powershell
-        run: |
-          # Скачивание tmate для Windows
-          $tmate_url = "https://github.com/tmate-io/tmate/releases/download/2.4.0/tmate-2.4.0-static-windows-amd64.exe"
-          $tmate_path = "$env:TEMP\tmate.exe"
-          
-          Invoke-WebRequest -Uri $tmate_url -OutFile $tmate_path
-          
-          # Запуск tmate и вывод SSH строки
-          Write-Host "Starting tmate on Windows..."
-          Write-Host ""
-          
-          # tmate требует консоль, используем Start-Process с перенаправлением
-          $script = @'
-          $env:TMATE_SOCK = "C:\tmate.sock"
-          & "$env:TEMP\tmate.exe" -S $env:TMATE_SOCK new-session -d
-          Start-Sleep -Seconds 5
-          & "$env:TEMP\tmate.exe" -S $env:TMATE_SOCK wait tmate-ready
-          & "$env:TEMP\tmate.exe" -S $env:TMATE_SOCK display -p '#{tmate_ssh}'
-          '@
-          
-          $script_path = "$env:TEMP\run_tmate.ps1"
-          $script | Out-File -FilePath $script_path -Encoding ASCII
-          
-          # Запуск и захват вывода
-          $output = & powershell.exe -ExecutionPolicy Bypass -File $script_path 2>&1
-          
-          Write-Host "=========================================="
-          Write-Host "TMATE SSH CONNECTION (Windows):"
-          Write-Host "=========================================="
-          Write-Host $output
-          Write-Host ""
-          
-          # Сохраняем SSH строку в файл для artifacts
-          $output | Out-File -FilePath tmate_windows.txt
-
-      - name: Alternative - Use ngrok for RDP/VNC (manual)
-        shell: powershell
-        run: |
-          Write-Host "=========================================="
-          Write-Host "ALTERNATIVE: ngrok tunneling"
-          Write-Host "=========================================="
-          Write-Host ""
-          Write-Host "1. Создайте аккаунт на ngrok.com"
-          Write-Host "2. Добавьте токен в GitHub Secrets: NGROK_AUTH_TOKEN"
-          Write-Host ""
-          Write-Host "Для автоматического туннеля, добавьте:"
-          Write-Host ""
-          Write-Host "```yaml"
-          Write-Host "- name: ngrok tunnel"
-          Write-Host "  run: |"
-          Write-Host "    wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
-          Write-Host "    unzip ngrok-v3-stable-windows-amd64.zip"
-          Write-Host "    ./ngrok config add-authtoken `${{ secrets.NGROK_AUTH_TOKEN }}"
-          Write-Host "    ./ngrok tcp 3389 --log=ngrok.log &"
-          Write-Host "```"
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "CURRENT TMATE SSH WINDOWS:"
-          Write-Host "=========================================="
-          
-          if (Test-Path tmate_windows.txt) {
-            Get-Content tmate_windows.txt
-          } else {
-            Write-Host "tmate не запустился на Windows напрямую"
-            Write-Host "Используйте Alpine VM внутри QEMU для tmate"
-          }
-
-      - name: Setup tmate inside QEMU (Alpine VM with networking)
-        shell: powershell
-        run: |
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "ALPINE LINUX INSIDE QEMU - TMATE SETUP"
-          Write-Host "=========================================="
-          Write-Host ""
-          Write-Host "Чтобы получить tmate внутри виртуальной машины:"
-          Write-Host ""
-          Write-Host "1. Подключитесь к Alpine через VNC (5900 порт)"
-          Write-Host "2. Войдите как root (без пароля)"
-          Write-Host "3. Выполните: apk add tmate"
-          Write-Host "4. Запустите: tmate new-session -d"
-          Write-Host "5. Получите SSH: tmate display -p '#{tmate_ssh}'"
-          Write-Host ""
-          Write-Host "ИЛИ автоматически через SSH forward:"
-          Write-Host ""
-          Write-Host "```bash"
-          Write-Host "# В другом терминале:"
-          Write-Host "ssh -p 2222 root@localhost  # после настройки SSH в Alpine"
-          Write-Host "apk add tmate"
-          Write-Host "tmate new-session -d"
-          Write-Host "tmate display -p '#{tmate_ssh}'"
-          Write-Host "```"
-          Write-Host ""
-
-      - name: Save connection info
-        shell: powershell
-        run: |
-          | Out-File -FilePath tmate_connection_info.txt
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-tmate-info
-          path: |
-            tmate_connection_info.txt
-            tmate_windows.txt
-            qemu_serial.log
-          retention-days: 7
+          systeminfo
 
       - name: Keep alive
         shell: powershell
-        run: Start-Sleep -Seconds 999999
+        run: |
+          while ($true) {
+            Write-Host "WINDOWS RUNNING"
+            Start-Sleep 60
+          }
