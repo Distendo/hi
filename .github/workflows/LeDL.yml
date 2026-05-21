@@ -1,12 +1,12 @@
-name: ALDL
+name: LeDL
 
 on:
   workflow_dispatch:
     inputs:
       os:
-        description: "Select OS"
+        description: "Select OS (only 1)"
         required: true
-        default: ubuntu
+        default: arch
         type: choice
         options:
           - ubuntu
@@ -39,10 +39,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install UPM (Ubuntu)
+      - name: Install base developer tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tmate
+          sudo apt-get install -y \
+            tmate \
+            git curl wget vim nano htop \
+            build-essential gcc g++ make \
+            python3 python3-pip nodejs npm \
+            net-tools iputils-ping dnsutils \
+            strace ltrace gdb valgrind \
+            tmux screen rsync \
+            openssh-client openssh-server \
+            docker.io docker-compose \
+            jq yq xmlstarlet
 
       - name: Create UPM wrapper
         run: |
@@ -55,8 +65,26 @@ jobs:
             install)
               sudo apt-get install -y "$PKG"
               ;;
+            uninstall)
+              sudo apt-get remove -y "$PKG"
+              ;;
             update)
               sudo apt-get update -qq
+              ;;
+            upgrade)
+              sudo apt-get upgrade -y
+              ;;
+            search)
+              apt-cache search "$PKG"
+              ;;
+            info)
+              apt-cache show "$PKG"
+              ;;
+            clean)
+              sudo apt-get autoremove -y && sudo apt-get autoclean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
@@ -64,13 +92,25 @@ jobs:
           chmod +x upm.sh
           sudo mv upm.sh /usr/local/bin/upm
 
+      - name: Install Docker Compose tools
+        run: |
+          sudo systemctl start docker || true
+          sudo usermod -aG docker $USER || true
+
       - name: Start tmate
         run: |
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
 
       - name: Show SSH
-        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          echo ""
+          echo "WEB SESSION:"
+          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
 
       - name: Keep alive
         run: sleep infinity
@@ -92,12 +132,23 @@ jobs:
           docker rm -f os || true
           docker run -dit --name os archlinux:latest
 
-      - name: Install UPM (Arch)
+      - name: Install base developer tools in container
         run: |
           docker exec os bash -c "
             pacman -Sy --noconfirm
+            pacman -S --noconfirm \
+              tmate git curl wget vim nano htop \
+              gcc g++ make cmake \
+              python python-pip nodejs npm \
+              net-tools inetutils bind-tools \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh docker docker-compose \
+              jq yq
           "
 
+      - name: Create UPM wrapper (Arch)
+        run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
@@ -108,17 +159,31 @@ jobs:
             install)
               pacman -S --noconfirm "$PKG"
               ;;
+            uninstall)
+              pacman -R --noconfirm "$PKG"
+              ;;
             update)
               pacman -Sy --noconfirm
+              ;;
+            upgrade)
+              pacman -Syu --noconfirm
+              ;;
+            search)
+              pacman -Ss "$PKG"
+              ;;
+            info)
+              pacman -Qi "$PKG"
+              ;;
+            clean)
+              pacman -Scc --noconfirm
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
-
-      - name: Install tmate via UPM
-        run: |
-          docker exec os upm install tmate
 
       - name: Start tmate
         run: |
@@ -127,7 +192,13 @@ jobs:
 
       - name: Show SSH
         run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
           docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "WEB SESSION:"
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_web}'"
 
       - name: Keep alive
         run: sleep infinity
@@ -139,6 +210,7 @@ jobs:
   debian:
     if: github.event.inputs.os == 'debian'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -148,12 +220,24 @@ jobs:
           docker rm -f os || true
           docker run -dit --name os debian:latest
 
-      - name: Install UPM (Debian)
+      - name: Install base developer tools
         run: |
           docker exec os bash -c "
             apt-get update -qq
+            apt-get install -y \
+              tmate git curl wget vim nano htop \
+              build-essential gcc g++ make \
+              python3 python3-pip nodejs npm \
+              net-tools iputils-ping dnsutils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh-client openssh-server \
+              docker.io docker-compose \
+              jq
           "
 
+      - name: Create UPM wrapper (Debian)
+        run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
@@ -164,16 +248,31 @@ jobs:
             install)
               apt-get install -y "$PKG"
               ;;
+            uninstall)
+              apt-get remove -y "$PKG"
+              ;;
             update)
               apt-get update -qq
+              ;;
+            upgrade)
+              apt-get upgrade -y
+              ;;
+            search)
+              apt-cache search "$PKG"
+              ;;
+            info)
+              apt-cache show "$PKG"
+              ;;
+            clean)
+              apt-get autoremove -y && apt-get autoclean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
 
       - name: Start tmate
         run: |
@@ -181,7 +280,14 @@ jobs:
           sleep 5
 
       - name: Show SSH
-        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "WEB SESSION:"
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_web}'"
 
       - name: Keep alive
         run: sleep infinity
@@ -193,6 +299,7 @@ jobs:
   alpine:
     if: github.event.inputs.os == 'alpine'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -202,12 +309,22 @@ jobs:
           docker rm -f os || true
           docker run -dit --name os alpine:latest
 
-      - name: Install UPM (Alpine)
+      - name: Install base developer tools
         run: |
           docker exec os sh -c "
-            apk add --no-cache bash
+            apk add --no-cache \
+              bash tmate git curl wget vim nano htop \
+              gcc g++ make cmake \
+              python3 py3-pip nodejs npm \
+              net-tools iputils bind-tools \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh docker docker-compose \
+              jq yq
           "
 
+      - name: Create UPM wrapper (Alpine)
+        run: |
           docker exec os sh -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/sh
@@ -218,16 +335,31 @@ jobs:
             install)
               apk add --no-cache "$PKG"
               ;;
+            uninstall)
+              apk del "$PKG"
+              ;;
             update)
               apk update
+              ;;
+            upgrade)
+              apk upgrade
+              ;;
+            search)
+              apk search "$PKG"
+              ;;
+            info)
+              apk info "$PKG"
+              ;;
+            clean)
+              apk cache clean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
 
       - name: Start tmate
         run: |
@@ -235,7 +367,14 @@ jobs:
           sleep 5
 
       - name: Show SSH
-        run: docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "WEB SESSION:"
+          docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_web}'"
 
       - name: Keep alive
         run: sleep infinity
@@ -247,6 +386,7 @@ jobs:
   fedora:
     if: github.event.inputs.os == 'fedora'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -256,12 +396,23 @@ jobs:
           docker rm -f os || true
           docker run -dit --name os fedora:latest
 
-      - name: Install UPM (Fedora)
+      - name: Install base developer tools
         run: |
           docker exec os bash -c "
             dnf makecache
+            dnf install -y \
+              tmate git curl wget vim nano htop \
+              gcc gcc-c++ make cmake \
+              python3 python3-pip nodejs npm \
+              net-tools bind-utils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh-server docker docker-compose \
+              jq
           "
 
+      - name: Create UPM wrapper (Fedora)
+        run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
@@ -272,16 +423,31 @@ jobs:
             install)
               dnf install -y "$PKG"
               ;;
+            uninstall)
+              dnf remove -y "$PKG"
+              ;;
             update)
               dnf makecache
+              ;;
+            upgrade)
+              dnf upgrade -y
+              ;;
+            search)
+              dnf search "$PKG"
+              ;;
+            info)
+              dnf info "$PKG"
+              ;;
+            clean)
+              dnf clean all
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
 
       - name: Start tmate
         run: |
@@ -289,7 +455,14 @@ jobs:
           sleep 5
 
       - name: Show SSH
-        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "WEB SESSION:"
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_web}'"
 
       - name: Keep alive
         run: sleep infinity
@@ -301,6 +474,7 @@ jobs:
   kali:
     if: github.event.inputs.os == 'kali'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -310,12 +484,25 @@ jobs:
           docker rm -f os || true
           docker run -dit --name os kalilinux/kali-rolling:latest
 
-      - name: Install UPM (Kali)
+      - name: Install base developer tools
         run: |
           docker exec os bash -c "
             apt-get update -qq
+            apt-get install -y \
+              tmate git curl wget vim nano htop \
+              build-essential gcc g++ make \
+              python3 python3-pip nodejs npm \
+              net-tools iputils-ping dnsutils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh-client openssh-server \
+              docker.io docker-compose \
+              jq yq \
+              nmap wireshark metasploit-framework
           "
 
+      - name: Create UPM wrapper (Kali)
+        run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
@@ -326,16 +513,31 @@ jobs:
             install)
               apt-get install -y "$PKG"
               ;;
+            uninstall)
+              apt-get remove -y "$PKG"
+              ;;
             update)
               apt-get update -qq
+              ;;
+            upgrade)
+              apt-get upgrade -y
+              ;;
+            search)
+              apt-cache search "$PKG"
+              ;;
+            info)
+              apt-cache show "$PKG"
+              ;;
+            clean)
+              apt-get autoremove -y && apt-get autoclean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
-
-      - name: Install tmate via UPM
-        run: docker exec os upm install tmate
 
       - name: Start tmate
         run: |
@@ -343,7 +545,14 @@ jobs:
           sleep 5
 
       - name: Show SSH
-        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "WEB SESSION:"
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_web}'"
 
       - name: Keep alive
         run: sleep infinity
@@ -355,14 +564,25 @@ jobs:
   macos:
     if: github.event.inputs.os == 'macos'
     runs-on: macos-latest
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install UPM (macOS)
+      - name: Install base developer tools (macOS)
         run: |
-          brew install tmate
+          brew update
+          brew install \
+            tmate git curl wget vim nano htop \
+            gcc make cmake \
+            python3 nodejs npm \
+            net-tools \
+            tmux screen rsync \
+            openssh jq yq \
+            docker docker-compose
 
+      - name: Create UPM wrapper (macOS)
+        run: |
           cat << 'EOF' > /usr/local/bin/upm
           #!/bin/bash
           CMD=$1
@@ -372,8 +592,26 @@ jobs:
             install)
               brew install "$PKG"
               ;;
+            uninstall)
+              brew uninstall "$PKG"
+              ;;
             update)
               brew update
+              ;;
+            upgrade)
+              brew upgrade
+              ;;
+            search)
+              brew search "$PKG"
+              ;;
+            info)
+              brew info "$PKG"
+              ;;
+            clean)
+              brew cleanup
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
               ;;
           esac
           EOF
@@ -386,56 +624,209 @@ jobs:
           tmate -S /tmp/tmate.sock wait tmate-ready
 
       - name: Show SSH
-        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          echo ""
+          echo "WEB SESSION:"
+          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
 
       - name: Keep alive
         run: sleep infinity
 
 
 ###############################################################################
-# WINDOWS (no real package system layer)
+# WINDOWS (with tmate via WSL2/QEMU)
 ###############################################################################
   windows:
     if: github.event.inputs.os == 'windows'
     runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
-      - name: System info
+      - name: Install WSL2 and developer tools
         shell: powershell
-        run: systeminfo
+        run: |
+          wsl --install -d Ubuntu
+          wsl --set-default-version 2
+
+      - name: Install base tools via WSL
+        shell: powershell
+        run: |
+          wsl bash -c "
+            apt-get update -qq
+            apt-get install -y \
+              tmate git curl wget vim nano htop \
+              build-essential gcc g++ make \
+              python3 python3-pip nodejs npm \
+              net-tools iputils-ping dnsutils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh-client openssh-server \
+              docker.io docker-compose \
+              jq yq
+          "
+
+      - name: Create UPM wrapper (Windows/WSL)
+        shell: powershell
+        run: |
+          wsl bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apt-get install -y "$PKG"
+              ;;
+            uninstall)
+              apt-get remove -y "$PKG"
+              ;;
+            update)
+              apt-get update -qq
+              ;;
+            upgrade)
+              apt-get upgrade -y
+              ;;
+            search)
+              apt-cache search "$PKG"
+              ;;
+            info)
+              apt-cache show "$PKG"
+              ;;
+            clean)
+              apt-get autoremove -y && apt-get autoclean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Start tmate in WSL
+        shell: powershell
+        run: |
+          wsl bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          wsl bash -c "tmate -S /tmp/tmate.sock wait tmate-ready"
+
+      - name: Show SSH
+        shell: powershell
+        run: |
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          wsl bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+          echo ""
+          echo "WEB SESSION:"
+          wsl bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_web}'"
 
       - name: Keep alive
         shell: powershell
-        run: Start-Sleep -Seconds 999999
+        run: wsl bash -c "sleep infinity"
+
+      - name: Alternative - QEMU with Alpine and tmate
+        shell: powershell
+        run: |
+          choco install qemu -y
+          wget https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-standard-3.19.1-x86_64.iso -OutFile alpine.iso
+          qemu-img create -f qcow2 alpine.qcow2 2G
+          
+          Start-Process -NoNewWindow -FilePath "qemu-system-x86_64" -ArgumentList @(
+            "-machine", "pc",
+            "-m", "512",
+            "-hda", "alpine.qcow2",
+            "-cdrom", "alpine.iso",
+            "-vnc", ":0",
+            "-netdev", "user,id=net0",
+            "-device", "e1000,netdev=net0"
+          )
+
+
 ###############################################################################
 # VOID LINUX
 ###############################################################################
   void:
     if: github.event.inputs.os == 'void'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run Void container
         run: |
           docker rm -f os || true
           docker run -dit --name os voidlinux/voidlinux
 
-      - name: Install UPM
+      - name: Install base developer tools
         run: |
           docker exec os bash -c "
-            xbps-install -Sy xbps || true
+            xbps-install -Sy xbps
+            xbps-install -Sy \
+              tmate git curl wget vim nano htop \
+              gcc g++ make cmake \
+              python3 nodejs npm \
+              net-tools bind-utils \
+              strace ltrace gdb \
+              tmux screen rsync \
+              openssh jq
           "
 
+      - name: Create UPM wrapper (Void)
+        run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
-          #!/bin/sh
-          case "$1" in
-            install) xbps-install -Sy "$2" ;;
-            update) xbps-install -S ;;
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              xbps-install -Sy "$PKG"
+              ;;
+            uninstall)
+              xbps-remove -R "$PKG"
+              ;;
+            update)
+              xbps-install -S
+              ;;
+            upgrade)
+              xbps-install -Su
+              ;;
+            search)
+              xbps-query -Rs "$PKG"
+              ;;
+            info)
+              xbps-query -Ri "$PKG"
+              ;;
+            clean)
+              xbps-remove -O
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # OPENSUSE
@@ -443,25 +834,81 @@ jobs:
   opensuse:
     if: github.event.inputs.os == 'opensuse'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run OpenSUSE container
         run: |
           docker rm -f os || true
           docker run -dit --name os opensuse/tumbleweed
 
-      - name: Install UPM
+      - name: Install base developer tools
+        run: |
+          docker exec os bash -c "
+            zypper refresh
+            zypper install -y \
+              tmate git curl wget vim nano htop \
+              gcc gcc-c++ make cmake \
+              python3 python3-pip nodejs npm \
+              net-tools bind-utils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh docker docker-compose \
+              jq
+          "
+
+      - name: Create UPM wrapper (OpenSUSE)
         run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-          case "$1" in
-            install) zypper install -y "$2" ;;
-            update) zypper refresh ;;
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              zypper install -y "$PKG"
+              ;;
+            uninstall)
+              zypper remove -y "$PKG"
+              ;;
+            update)
+              zypper refresh
+              ;;
+            upgrade)
+              zypper update -y
+              ;;
+            search)
+              zypper search "$PKG"
+              ;;
+            info)
+              zypper info "$PKG"
+              ;;
+            clean)
+              zypper clean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # ALMALINUX
@@ -469,25 +916,82 @@ jobs:
   almalinux:
     if: github.event.inputs.os == 'almalinux'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run AlmaLinux
         run: |
           docker rm -f os || true
           docker run -dit --name os almalinux:latest
 
-      - name: Install UPM
+      - name: Install base developer tools
+        run: |
+          docker exec os bash -c "
+            dnf makecache
+            dnf install -y epel-release
+            dnf install -y \
+              tmate git curl wget vim nano htop \
+              gcc gcc-c++ make cmake \
+              python3 python3-pip nodejs npm \
+              net-tools bind-utils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh docker docker-compose \
+              jq
+          "
+
+      - name: Create UPM wrapper (AlmaLinux)
         run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-          case "$1" in
-            install) dnf install -y "$2" ;;
-            update) dnf makecache ;;
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              dnf install -y "$PKG"
+              ;;
+            uninstall)
+              dnf remove -y "$PKG"
+              ;;
+            update)
+              dnf makecache
+              ;;
+            upgrade)
+              dnf upgrade -y
+              ;;
+            search)
+              dnf search "$PKG"
+              ;;
+            info)
+              dnf info "$PKG"
+              ;;
+            clean)
+              dnf clean all
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # CENTOS STREAM
@@ -495,25 +999,81 @@ jobs:
   centos:
     if: github.event.inputs.os == 'centos'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run CentOS Stream
         run: |
           docker rm -f os || true
           docker run -dit --name os quay.io/centos/centos:stream9
 
-      - name: Install UPM
+      - name: Install base developer tools
+        run: |
+          docker exec os bash -c "
+            dnf makecache
+            dnf install -y epel-release
+            dnf install -y \
+              tmate git curl wget vim nano htop \
+              gcc gcc-c++ make cmake \
+              python3 python3-pip nodejs npm \
+              net-tools bind-utils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh jq
+          "
+
+      - name: Create UPM wrapper (CentOS)
         run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-          case "$1" in
-            install) dnf install -y "$2" ;;
-            update) dnf makecache ;;
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              dnf install -y "$PKG"
+              ;;
+            uninstall)
+              dnf remove -y "$PKG"
+              ;;
+            update)
+              dnf makecache
+              ;;
+            upgrade)
+              dnf upgrade -y
+              ;;
+            search)
+              dnf search "$PKG"
+              ;;
+            info)
+              dnf info "$PKG"
+              ;;
+            clean)
+              dnf clean all
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # BUSYBOX (ULTRA MINIMAL)
@@ -521,22 +1081,55 @@ jobs:
   busybox:
     if: github.event.inputs.os == 'busybox'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run BusyBox container
         run: |
           docker rm -f os || true
           docker run -dit --name os busybox:latest sh
 
-      - name: Fake UPM (BusyBox mode)
+      - name: Install base tools (limited)
+        run: |
+          docker exec os sh -c "
+            apk add --no-cache bash curl wget vim nano htop gcc make python3 tmux screen rsync openssh jq 2>/dev/null || \
+            echo 'BusyBox limited - only basic tools available'
+          "
+
+      - name: Create UPM wrapper (BusyBox)
         run: |
           docker exec os sh -c '
-          cat << "EOF" > /bin/upm
+          cat << "EOF" > /usr/local/bin/upm
           #!/bin/sh
-          echo "BusyBox is minimal - no package manager"
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              echo "BusyBox: use apk add $PKG if Alpine layer present"
+              ;;
+            update)
+              echo "BusyBox: no package manager"
+              ;;
+            *)
+              echo "Usage: upm {install|update} [package] - limited BusyBox mode"
+              ;;
+          esac
           EOF
-          chmod +x /bin/upm
+          chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate (if available)
+        run: |
+          docker exec -d os sh -c "tmate -S /tmp/tmate.sock new-session -d 2>/dev/null || echo 'tmate not available'"
+          sleep 3
+          docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' 2>/dev/null || echo 'No tmate in BusyBox'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # GENTOO (SIMPLIFIED)
@@ -544,25 +1137,79 @@ jobs:
   gentoo:
     if: github.event.inputs.os == 'gentoo'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run Gentoo
         run: |
           docker rm -f os || true
           docker run -dit --name os gentoo/stage3
 
-      - name: Install UPM (Portage wrapper)
+      - name: Install base developer tools
+        run: |
+          docker exec os bash -c "
+            emerge-webrsync
+            emerge --sync
+            emerge \
+              dev-vcs/git net-misc/curl app-editors/vim \
+              sys-devel/gcc sys-devel/gdb \
+              dev-lang/python dev-lang/nodejs \
+              app-admin/htop app-shells/tmux \
+              net-misc/openssh app-misc/jq
+          "
+
+      - name: Create UPM wrapper (Gentoo)
         run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-          case "$1" in
-            install) emerge "$2" ;;
-            update) emerge --sync ;;
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              emerge "$PKG"
+              ;;
+            uninstall)
+              emerge --unmerge "$PKG"
+              ;;
+            update)
+              emerge --sync
+              ;;
+            upgrade)
+              emerge -uDN @world
+              ;;
+            search)
+              emerge --search "$PKG"
+              ;;
+            info)
+              emerge --info "$PKG"
+              ;;
+            clean)
+              emerge --depclean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # NIXOS (SIMULATED USERLAND)
@@ -570,25 +1217,77 @@ jobs:
   nixos:
     if: github.event.inputs.os == 'nixos'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run Nix container
         run: |
           docker rm -f os || true
           docker run -dit --name os nixos/nix
 
-      - name: Install UPM (Nix wrapper)
+      - name: Install base developer tools
+        run: |
+          docker exec os bash -c "
+            nix-channel --update
+            nix-env -iA \
+              nixpkgs.git nixpkgs.curl nixpkgs.wget nixpkgs.vim \
+              nixpkgs.gcc nixpkgs.gdb nixpkgs.python3 \
+              nixpkgs.nodejs nixpkgs.htop nixpkgs.tmux \
+              nixpkgs.openssh nixpkgs.jq nixpkgs.tmate
+          "
+
+      - name: Create UPM wrapper (NixOS)
         run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-          case "$1" in
-            install) nix-env -iA nixpkgs."$2" ;;
-            update) nix-channel --update ;;
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              nix-env -iA nixpkgs."$PKG"
+              ;;
+            uninstall)
+              nix-env --uninstall "$PKG"
+              ;;
+            update)
+              nix-channel --update
+              ;;
+            upgrade)
+              nix-env -u
+              ;;
+            search)
+              nix search nixpkgs "$PKG"
+              ;;
+            info)
+              nix-env -qaP "$PKG" --description
+              ;;
+            clean)
+              nix-collect-garbage
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # UBUNTU SLIM (MINIMAL IMAGE)
@@ -596,26 +1295,78 @@ jobs:
   ubuntu-slim:
     if: github.event.inputs.os == 'ubuntu-slim'
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run slim container
         run: |
           docker rm -f os || true
           docker run -dit --name os ubuntu:24.04-slim
 
-      - name: Install UPM
+      - name: Install base developer tools
         run: |
           docker exec os bash -c "
             apt-get update -qq
+            apt-get install -y \
+              tmate git curl wget vim nano htop \
+              build-essential gcc g++ make \
+              python3 python3-pip nodejs npm \
+              net-tools iputils-ping dnsutils \
+              strace ltrace gdb valgrind \
+              tmux screen rsync \
+              openssh-client openssh-server \
+              docker.io docker-compose \
+              jq yq
           "
 
+      - name: Create UPM wrapper (Ubuntu Slim)
+        run: |
           docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-          case "$1" in
-            install) apt-get install -y "$2" ;;
-            update) apt-get update -qq ;;
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apt-get install -y "$PKG"
+              ;;
+            uninstall)
+              apt-get remove -y "$PKG"
+              ;;
+            update)
+              apt-get update -qq
+              ;;
+            upgrade)
+              apt-get upgrade -y
+              ;;
+            search)
+              apt-cache search "$PKG"
+              ;;
+            info)
+              apt-cache show "$PKG"
+              ;;
+            clean)
+              apt-get autoremove -y && apt-get autoclean
+              ;;
+            *)
+              echo "Usage: upm {install|uninstall|update|upgrade|search|info|clean} [package]"
+              ;;
           esac
           EOF
           chmod +x /usr/local/bin/upm
           '
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+          echo "=========================================="
+          echo "TMATE SSH CONNECTION:"
+          echo "=========================================="
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
