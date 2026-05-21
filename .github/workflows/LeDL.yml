@@ -17,6 +17,14 @@ on:
           - kali
           - macos
           - windows
+          - void
+          - opensuse
+          - almalinux
+          - centos
+          - busybox
+          - gentoo
+          - nixos
+          - ubuntu-slim
 
 jobs:
 
@@ -31,42 +39,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      #########################################################################
-      # INSTALL PACKAGES
-      #########################################################################
-      - name: Install packages
+      - name: Install UPM (Ubuntu)
         run: |
           sudo apt-get update -qq
+          sudo apt-get install -y tmate
 
-          sudo apt-get install -y \
-            tmate \
-            xterm \
-            xvfb \
-            xauth \
-            x11-apps \
-            fluxbox
-
-      #########################################################################
-      # CONFIGURE SSH X11
-      #########################################################################
-      - name: Configure SSH X11
+      - name: Create UPM wrapper
         run: |
-          mkdir -p ~/.ssh
-
-          cat << EOF >> ~/.ssh/config
-          Host *
-              ForwardX11 yes
-              ForwardX11Trusted yes
-          EOF
-
-      #########################################################################
-      # CREATE UPM
-      #########################################################################
-      - name: Create UPM
-        run: |
-          cat << 'EOF' > upm
+          cat << 'EOF' > upm.sh
           #!/bin/bash
-
           CMD=$1
           PKG=$2
 
@@ -74,136 +55,26 @@ jobs:
             install)
               sudo apt-get install -y "$PKG"
               ;;
-            remove)
-              sudo apt-get remove -y "$PKG"
-              ;;
             update)
               sudo apt-get update -qq
-              ;;
-            *)
-              echo "UPM Commands:"
-              echo "upm install <pkg>"
-              echo "upm remove <pkg>"
-              echo "upm update"
               ;;
           esac
           EOF
 
-          chmod +x upm
+          chmod +x upm.sh
+          sudo mv upm.sh /usr/local/bin/upm
 
-          sudo mv upm /usr/local/bin/upm
-
-      #########################################################################
-      # START VIRTUAL X11
-      #########################################################################
-      - name: Start X11 server
+      - name: Start tmate
         run: |
-          export DISPLAY=:99
-
-          Xvfb :99 -screen 0 1280x720x24 &
-          sleep 3
-
-          fluxbox &
-          sleep 2
-
-          echo "DISPLAY=:99" >> $GITHUB_ENV
-
-      #########################################################################
-      # CREATE X11 APP LAUNCHER
-      #########################################################################
-      - name: Create ALDL-X
-        run: |
-          cat << 'EOF' > aldl-x
-          #!/bin/bash
-
-          export DISPLAY=:99
-
-          APP="$1"
-
-          if [ -z "$APP" ]; then
-            echo "Usage:"
-            echo "aldl-x xterm"
-            exit 1
-          fi
-
-          nohup "$APP" >/tmp/aldl-x.log 2>&1 &
-          echo "Started: $APP"
-          EOF
-
-          chmod +x aldl-x
-
-          sudo mv aldl-x /usr/local/bin/aldl-x
-
-      #########################################################################
-      # START TMATE WITH X11
-      #########################################################################
-      - name: Start tmate with X11
-        run: |
-          export DISPLAY=:99
-
           tmate -S /tmp/tmate.sock new-session -d
-
-          sleep 5
-
-          tmate -S /tmp/tmate.sock send-keys "export DISPLAY=:99" C-m
-
           tmate -S /tmp/tmate.sock wait tmate-ready
 
-          echo ""
-          echo "=========== ALDL SSH ==========="
-          echo ""
+      - name: Show SSH
+        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-
-          echo ""
-          echo "Connect like this:"
-          echo "ssh -Y <SSH_ADDRESS>"
-          echo ""
-
-          echo "Then run:"
-          echo "xterm"
-          echo ""
-
-          echo "================================"
-
-      #########################################################################
-      # TEST X11
-      #########################################################################
-      - name: Start xterm on runner
-        run: |
-          export DISPLAY=:99
-          aldl-x xterm
-
-      #########################################################################
-      # SYSTEM INFO
-      #########################################################################
-      - name: System info
-        run: |
-          echo "Kernel:"
-          uname -a
-
-          echo ""
-          echo "DISPLAY:"
-          echo $DISPLAY
-
-          echo ""
-          echo "Memory:"
-          free -h
-
-          echo ""
-          echo "Disk:"
-          df -h
-
-      #########################################################################
-      # KEEP RUNNER ALIVE
-      #########################################################################
       - name: Keep alive
-        run: |
-          while true; do
-            echo "ALDL RUNNING"
-            date
-            sleep 60
-          done
+        run: sleep infinity
+
 
 ###############################################################################
 # ARCH
@@ -216,57 +87,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      #########################################################################
-      # START CONTAINER
-      #########################################################################
-      - name: Start Arch container
+      - name: Start container
         run: |
-          docker rm -f aldl || true
+          docker rm -f os || true
+          docker run -dit --name os archlinux:latest
 
-          docker run -dit \
-            --name aldl \
-            archlinux:latest \
-            bash
-
-      #########################################################################
-      # INSTALL PACKAGES
-      #########################################################################
-      - name: Install packages
+      - name: Install UPM (Arch)
         run: |
-          docker exec aldl bash -c "
-            pacman -Sy --noconfirm &&
-            pacman -S --noconfirm \
-              tmate \
-              xterm \
-              xorg-server-xvfb \
-              xorg-xauth \
-              fluxbox
+          docker exec os bash -c "
+            pacman -Sy --noconfirm
           "
 
-      #########################################################################
-      # CONFIGURE SSH X11
-      #########################################################################
-      - name: Configure SSH
-        run: |
-          docker exec aldl bash -c '
-            mkdir -p ~/.ssh
-
-            cat << EOF >> ~/.ssh/config
-            Host *
-                ForwardX11 yes
-                ForwardX11Trusted yes
-            EOF
-          '
-
-      #########################################################################
-      # CREATE UPM
-      #########################################################################
-      - name: Create UPM
-        run: |
-          docker exec aldl bash -c '
+          docker exec os bash -c '
           cat << "EOF" > /usr/local/bin/upm
           #!/bin/bash
-
           CMD=$1
           PKG=$2
 
@@ -274,111 +108,246 @@ jobs:
             install)
               pacman -S --noconfirm "$PKG"
               ;;
-            remove)
-              pacman -R --noconfirm "$PKG"
-              ;;
             update)
               pacman -Sy --noconfirm
               ;;
           esac
           EOF
-
           chmod +x /usr/local/bin/upm
           '
 
-      #########################################################################
-      # START X11
-      #########################################################################
-      - name: Start X11
+      - name: Install tmate via UPM
         run: |
-          docker exec -d aldl bash -c "
-            export DISPLAY=:99
+          docker exec os upm install tmate
 
-            Xvfb :99 -screen 0 1280x720x24 &
-            sleep 3
-
-            fluxbox &
-          "
-
-      #########################################################################
-      # CREATE ALDL-X
-      #########################################################################
-      - name: Create ALDL-X
-        run: |
-          docker exec aldl bash -c '
-          cat << "EOF" > /usr/local/bin/aldl-x
-          #!/bin/bash
-
-          export DISPLAY=:99
-
-          APP="$1"
-
-          nohup "$APP" >/tmp/aldl-x.log 2>&1 &
-          EOF
-
-          chmod +x /usr/local/bin/aldl-x
-          '
-
-      #########################################################################
-      # START TMATE
-      #########################################################################
       - name: Start tmate
         run: |
-          docker exec -d aldl bash -c "
-            export DISPLAY=:99
-
-            tmate -S /tmp/tmate.sock new-session -d
-
-            sleep 5
-
-            tmate -S /tmp/tmate.sock send-keys 'export DISPLAY=:99' C-m
-          "
-
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
           sleep 5
 
-      #########################################################################
-      # SHOW SSH
-      #########################################################################
       - name: Show SSH
         run: |
-          echo ""
-          echo "=========== ALDL ARCH SSH ==========="
-          echo ""
+          docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
 
-          docker exec aldl bash -c "
-            tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-          "
-
-          echo ""
-          echo "Connect using:"
-          echo "ssh -Y <SSH_ADDRESS>"
-          echo ""
-
-          echo "Then:"
-          echo "xterm"
-          echo ""
-
-          echo "====================================="
-
-      #########################################################################
-      # START TEST XTERM
-      #########################################################################
-      - name: Start xterm
-        run: |
-          docker exec aldl bash -c "
-            export DISPLAY=:99
-            aldl-x xterm
-          "
-
-      #########################################################################
-      # KEEP ALIVE
-      #########################################################################
       - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# DEBIAN
+###############################################################################
+  debian:
+    if: github.event.inputs.os == 'debian'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
         run: |
-          while true; do
-            echo "ARCH RUNNING"
-            sleep 60
-          done
+          docker rm -f os || true
+          docker run -dit --name os debian:latest
+
+      - name: Install UPM (Debian)
+        run: |
+          docker exec os bash -c "
+            apt-get update -qq
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apt-get install -y "$PKG"
+              ;;
+            update)
+              apt-get update -qq
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# ALPINE
+###############################################################################
+  alpine:
+    if: github.event.inputs.os == 'alpine'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os alpine:latest
+
+      - name: Install UPM (Alpine)
+        run: |
+          docker exec os sh -c "
+            apk add --no-cache bash
+          "
+
+          docker exec os sh -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/sh
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apk add --no-cache "$PKG"
+              ;;
+            update)
+              apk update
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os sh -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os sh -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# FEDORA
+###############################################################################
+  fedora:
+    if: github.event.inputs.os == 'fedora'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os fedora:latest
+
+      - name: Install UPM (Fedora)
+        run: |
+          docker exec os bash -c "
+            dnf makecache
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              dnf install -y "$PKG"
+              ;;
+            update)
+              dnf makecache
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
+
+###############################################################################
+# KALI
+###############################################################################
+  kali:
+    if: github.event.inputs.os == 'kali'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os kalilinux/kali-rolling:latest
+
+      - name: Install UPM (Kali)
+        run: |
+          docker exec os bash -c "
+            apt-get update -qq
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
+
+          case "$CMD" in
+            install)
+              apt-get install -y "$PKG"
+              ;;
+            update)
+              apt-get update -qq
+              ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+      - name: Install tmate via UPM
+        run: docker exec os upm install tmate
+
+      - name: Start tmate
+        run: |
+          docker exec -d os bash -c "tmate -S /tmp/tmate.sock new-session -d"
+          sleep 5
+
+      - name: Show SSH
+        run: docker exec os bash -c "tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'"
+
+      - name: Keep alive
+        run: sleep infinity
+
 
 ###############################################################################
 # MACOS
@@ -386,55 +355,45 @@ jobs:
   macos:
     if: github.event.inputs.os == 'macos'
     runs-on: macos-latest
-    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install packages
+      - name: Install UPM (macOS)
         run: |
-          brew install tmate xquartz
+          brew install tmate
 
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
+          cat << 'EOF' > /usr/local/bin/upm
+          #!/bin/bash
+          CMD=$1
+          PKG=$2
 
-          cat << EOF >> ~/.ssh/config
-          Host *
-              ForwardX11 yes
-              ForwardX11Trusted yes
+          case "$CMD" in
+            install)
+              brew install "$PKG"
+              ;;
+            update)
+              brew update
+              ;;
+          esac
           EOF
+
+          chmod +x /usr/local/bin/upm
 
       - name: Start tmate
         run: |
           tmate -S /tmp/tmate.sock new-session -d
-
-          sleep 5
-
           tmate -S /tmp/tmate.sock wait tmate-ready
 
-          echo ""
-          echo "=========== ALDL MACOS SSH ==========="
-          echo ""
-
-          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-
-          echo ""
-          echo "Connect:"
-          echo "ssh -Y <SSH_ADDRESS>"
-          echo ""
-
-          echo "======================================"
+      - name: Show SSH
+        run: tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
       - name: Keep alive
-        run: |
-          while true; do
-            echo "MACOS RUNNING"
-            sleep 60
-          done
+        run: sleep infinity
+
 
 ###############################################################################
-# WINDOWS
+# WINDOWS (no real package system layer)
 ###############################################################################
   windows:
     if: github.event.inputs.os == 'windows'
@@ -443,40 +402,220 @@ jobs:
     steps:
       - name: System info
         shell: powershell
-        run: |
-          systeminfo
+        run: systeminfo
 
       - name: Keep alive
         shell: powershell
+        run: Start-Sleep -Seconds 999999
+###############################################################################
+# VOID LINUX
+###############################################################################
+  void:
+    if: github.event.inputs.os == 'void'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run Void container
         run: |
-          while ($true) {
-            Write-Host "WINDOWS RUNNING"
-            Start-Sleep 60
-          }
+          docker rm -f os || true
+          docker run -dit --name os voidlinux/voidlinux
+
+      - name: Install UPM
+        run: |
+          docker exec os bash -c "
+            xbps-install -Sy xbps || true
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/sh
+          case "$1" in
+            install) xbps-install -Sy "$2" ;;
+            update) xbps-install -S ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
 
 ###############################################################################
-# PLACEHOLDERS
+# OPENSUSE
 ###############################################################################
-  debian:
-    if: github.event.inputs.os == 'debian'
+  opensuse:
+    if: github.event.inputs.os == 'opensuse'
     runs-on: ubuntu-latest
-    steps:
-      - run: echo "Debian placeholder"
 
-  alpine:
-    if: github.event.inputs.os == 'alpine'
-    runs-on: ubuntu-latest
     steps:
-      - run: echo "Alpine placeholder"
+      - name: Run OpenSUSE container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os opensuse/tumbleweed
 
-  fedora:
-    if: github.event.inputs.os == 'fedora'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Fedora placeholder"
+      - name: Install UPM
+        run: |
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          case "$1" in
+            install) zypper install -y "$2" ;;
+            update) zypper refresh ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
 
-  kali:
-    if: github.event.inputs.os == 'kali'
+###############################################################################
+# ALMALINUX
+###############################################################################
+  almalinux:
+    if: github.event.inputs.os == 'almalinux'
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "Kali placeholder"
+      - name: Run AlmaLinux
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os almalinux:latest
+
+      - name: Install UPM
+        run: |
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          case "$1" in
+            install) dnf install -y "$2" ;;
+            update) dnf makecache ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+###############################################################################
+# CENTOS STREAM
+###############################################################################
+  centos:
+    if: github.event.inputs.os == 'centos'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run CentOS Stream
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os quay.io/centos/centos:stream9
+
+      - name: Install UPM
+        run: |
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          case "$1" in
+            install) dnf install -y "$2" ;;
+            update) dnf makecache ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+###############################################################################
+# BUSYBOX (ULTRA MINIMAL)
+###############################################################################
+  busybox:
+    if: github.event.inputs.os == 'busybox'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run BusyBox container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os busybox:latest sh
+
+      - name: Fake UPM (BusyBox mode)
+        run: |
+          docker exec os sh -c '
+          cat << "EOF" > /bin/upm
+          #!/bin/sh
+          echo "BusyBox is minimal - no package manager"
+          EOF
+          chmod +x /bin/upm
+          '
+
+###############################################################################
+# GENTOO (SIMPLIFIED)
+###############################################################################
+  gentoo:
+    if: github.event.inputs.os == 'gentoo'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run Gentoo
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os gentoo/stage3
+
+      - name: Install UPM (Portage wrapper)
+        run: |
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          case "$1" in
+            install) emerge "$2" ;;
+            update) emerge --sync ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+###############################################################################
+# NIXOS (SIMULATED USERLAND)
+###############################################################################
+  nixos:
+    if: github.event.inputs.os == 'nixos'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run Nix container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os nixos/nix
+
+      - name: Install UPM (Nix wrapper)
+        run: |
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          case "$1" in
+            install) nix-env -iA nixpkgs."$2" ;;
+            update) nix-channel --update ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
+
+###############################################################################
+# UBUNTU SLIM (MINIMAL IMAGE)
+###############################################################################
+  ubuntu-slim:
+    if: github.event.inputs.os == 'ubuntu-slim'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run slim container
+        run: |
+          docker rm -f os || true
+          docker run -dit --name os ubuntu:24.04-slim
+
+      - name: Install UPM
+        run: |
+          docker exec os bash -c "
+            apt-get update -qq
+          "
+
+          docker exec os bash -c '
+          cat << "EOF" > /usr/local/bin/upm
+          #!/bin/bash
+          case "$1" in
+            install) apt-get install -y "$2" ;;
+            update) apt-get update -qq ;;
+          esac
+          EOF
+          chmod +x /usr/local/bin/upm
+          '
