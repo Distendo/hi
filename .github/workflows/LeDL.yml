@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
 
       #########################################################################
-      # INSTALL CORE
+      # INSTALL PACKAGES
       #########################################################################
       - name: Install packages
         run: |
@@ -47,7 +47,20 @@ jobs:
             fluxbox
 
       #########################################################################
-      # CREATE UNIVERSAL PACKAGE MANAGER
+      # CONFIGURE SSH X11
+      #########################################################################
+      - name: Configure SSH X11
+        run: |
+          mkdir -p ~/.ssh
+
+          cat << EOF >> ~/.ssh/config
+          Host *
+              ForwardX11 yes
+              ForwardX11Trusted yes
+          EOF
+
+      #########################################################################
+      # CREATE UPM
       #########################################################################
       - name: Create UPM
         run: |
@@ -61,11 +74,11 @@ jobs:
             install)
               sudo apt-get install -y "$PKG"
               ;;
-            update)
-              sudo apt-get update -qq
-              ;;
             remove)
               sudo apt-get remove -y "$PKG"
+              ;;
+            update)
+              sudo apt-get update -qq
               ;;
             *)
               echo "UPM Commands:"
@@ -81,9 +94,9 @@ jobs:
           sudo mv upm /usr/local/bin/upm
 
       #########################################################################
-      # START X11 SERVER
+      # START VIRTUAL X11
       #########################################################################
-      - name: Start X11
+      - name: Start X11 server
         run: |
           export DISPLAY=:99
 
@@ -96,7 +109,7 @@ jobs:
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
       #########################################################################
-      # CREATE X11 APPLICATION LAUNCHER
+      # CREATE X11 APP LAUNCHER
       #########################################################################
       - name: Create ALDL-X
         run: |
@@ -122,13 +135,17 @@ jobs:
           sudo mv aldl-x /usr/local/bin/aldl-x
 
       #########################################################################
-      # START TMATE
+      # START TMATE WITH X11
       #########################################################################
-      - name: Start tmate
+      - name: Start tmate with X11
         run: |
+          export DISPLAY=:99
+
           tmate -S /tmp/tmate.sock new-session -d
 
           sleep 5
+
+          tmate -S /tmp/tmate.sock send-keys "export DISPLAY=:99" C-m
 
           tmate -S /tmp/tmate.sock wait tmate-ready
 
@@ -139,12 +156,20 @@ jobs:
           tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
           echo ""
+          echo "Connect like this:"
+          echo "ssh -Y <SSH_ADDRESS>"
+          echo ""
+
+          echo "Then run:"
+          echo "xterm"
+          echo ""
+
           echo "================================"
 
       #########################################################################
-      # START DEFAULT XTERM
+      # TEST X11
       #########################################################################
-      - name: Start xterm
+      - name: Start xterm on runner
         run: |
           export DISPLAY=:99
           aldl-x xterm
@@ -158,8 +183,8 @@ jobs:
           uname -a
 
           echo ""
-          echo "Docker:"
-          docker --version || true
+          echo "DISPLAY:"
+          echo $DISPLAY
 
           echo ""
           echo "Memory:"
@@ -191,6 +216,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      #########################################################################
+      # START CONTAINER
+      #########################################################################
       - name: Start Arch container
         run: |
           docker rm -f aldl || true
@@ -200,19 +228,39 @@ jobs:
             archlinux:latest \
             bash
 
-      - name: Install system
+      #########################################################################
+      # INSTALL PACKAGES
+      #########################################################################
+      - name: Install packages
         run: |
           docker exec aldl bash -c "
             pacman -Sy --noconfirm &&
             pacman -S --noconfirm \
               tmate \
               xterm \
-              xorg-xauth \
               xorg-server-xvfb \
-              xorg-xhost \
+              xorg-xauth \
               fluxbox
           "
 
+      #########################################################################
+      # CONFIGURE SSH X11
+      #########################################################################
+      - name: Configure SSH
+        run: |
+          docker exec aldl bash -c '
+            mkdir -p ~/.ssh
+
+            cat << EOF >> ~/.ssh/config
+            Host *
+                ForwardX11 yes
+                ForwardX11Trusted yes
+            EOF
+          '
+
+      #########################################################################
+      # CREATE UPM
+      #########################################################################
       - name: Create UPM
         run: |
           docker exec aldl bash -c '
@@ -238,15 +286,23 @@ jobs:
           chmod +x /usr/local/bin/upm
           '
 
+      #########################################################################
+      # START X11
+      #########################################################################
       - name: Start X11
         run: |
           docker exec -d aldl bash -c "
             export DISPLAY=:99
+
             Xvfb :99 -screen 0 1280x720x24 &
-            sleep 2
+            sleep 3
+
             fluxbox &
           "
 
+      #########################################################################
+      # CREATE ALDL-X
+      #########################################################################
       - name: Create ALDL-X
         run: |
           docker exec aldl bash -c '
@@ -263,14 +319,26 @@ jobs:
           chmod +x /usr/local/bin/aldl-x
           '
 
+      #########################################################################
+      # START TMATE
+      #########################################################################
       - name: Start tmate
         run: |
           docker exec -d aldl bash -c "
+            export DISPLAY=:99
+
             tmate -S /tmp/tmate.sock new-session -d
+
+            sleep 5
+
+            tmate -S /tmp/tmate.sock send-keys 'export DISPLAY=:99' C-m
           "
 
           sleep 5
 
+      #########################################################################
+      # SHOW SSH
+      #########################################################################
       - name: Show SSH
         run: |
           echo ""
@@ -282,8 +350,19 @@ jobs:
           "
 
           echo ""
+          echo "Connect using:"
+          echo "ssh -Y <SSH_ADDRESS>"
+          echo ""
+
+          echo "Then:"
+          echo "xterm"
+          echo ""
+
           echo "====================================="
 
+      #########################################################################
+      # START TEST XTERM
+      #########################################################################
       - name: Start xterm
         run: |
           docker exec aldl bash -c "
@@ -291,6 +370,9 @@ jobs:
             aldl-x xterm
           "
 
+      #########################################################################
+      # KEEP ALIVE
+      #########################################################################
       - name: Keep alive
         run: |
           while true; do
@@ -299,56 +381,29 @@ jobs:
           done
 
 ###############################################################################
-# DEBIAN
-###############################################################################
-  debian:
-    if: github.event.inputs.os == 'debian'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Debian profile placeholder"
-
-###############################################################################
-# ALPINE
-###############################################################################
-  alpine:
-    if: github.event.inputs.os == 'alpine'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Alpine profile placeholder"
-
-###############################################################################
-# FEDORA
-###############################################################################
-  fedora:
-    if: github.event.inputs.os == 'fedora'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Fedora profile placeholder"
-
-###############################################################################
-# KALI
-###############################################################################
-  kali:
-    if: github.event.inputs.os == 'kali'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Kali profile placeholder"
-
-###############################################################################
 # MACOS
 ###############################################################################
   macos:
     if: github.event.inputs.os == 'macos'
     runs-on: macos-latest
+    timeout-minutes: 360
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install packages
         run: |
-          brew install tmate xterm
+          brew install tmate xquartz
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+
+          cat << EOF >> ~/.ssh/config
+          Host *
+              ForwardX11 yes
+              ForwardX11Trusted yes
+          EOF
 
       - name: Start tmate
         run: |
@@ -365,6 +420,10 @@ jobs:
           tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
           echo ""
+          echo "Connect:"
+          echo "ssh -Y <SSH_ADDRESS>"
+          echo ""
+
           echo "======================================"
 
       - name: Keep alive
@@ -394,3 +453,30 @@ jobs:
             Write-Host "WINDOWS RUNNING"
             Start-Sleep 60
           }
+
+###############################################################################
+# PLACEHOLDERS
+###############################################################################
+  debian:
+    if: github.event.inputs.os == 'debian'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Debian placeholder"
+
+  alpine:
+    if: github.event.inputs.os == 'alpine'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Alpine placeholder"
+
+  fedora:
+    if: github.event.inputs.os == 'fedora'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Fedora placeholder"
+
+  kali:
+    if: github.event.inputs.os == 'kali'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Kali placeholder"
