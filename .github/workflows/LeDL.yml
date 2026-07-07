@@ -1,4 +1,4 @@
-name: LeDL - Linux and etc. Docker Lab
+name: LeDL - Linux and etc. Docker Lab. Made by Distendo
 
 on:
   workflow_dispatch:
