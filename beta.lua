@@ -32,6 +32,7 @@ local currentStiffnessIndex = 2
 local isVisible = true
 local isSimulationActive = true
 local isJimActive = false
+local isCanCollideActive = false
 
 local renderConnection = nil
 
@@ -84,7 +85,7 @@ local function setupCharacter(char)
 	leftSphere.Shape = Enum.PartType.Ball
 	leftSphere.Size = Vector3.new(baseSphereDiameter, baseSphereDiameter, baseSphereDiameter)
 	leftSphere.Color = targetColor
-	leftSphere.CanCollide = false
+	leftSphere.CanCollide = isCanCollideActive
 	leftSphere.Transparency = isVisible and 0 or 1
 	leftSphere.Parent = folder
 
@@ -93,7 +94,7 @@ local function setupCharacter(char)
 	rightSphere.Shape = Enum.PartType.Ball
 	rightSphere.Size = Vector3.new(baseSphereDiameter, baseSphereDiameter, baseSphereDiameter)
 	rightSphere.Color = targetColor
-	rightSphere.CanCollide = false
+	rightSphere.CanCollide = isCanCollideActive
 	rightSphere.Transparency = isVisible and 0 or 1
 	rightSphere.Parent = folder
 
@@ -126,7 +127,7 @@ local function setupCharacter(char)
 		seg.Shape = Enum.PartType.Cylinder
 		seg.Size = Vector3.new(segmentLength, segmentDiameter, segmentDiameter)
 		seg.Color = targetColor
-		seg.CanCollide = false
+		seg.CanCollide = isCanCollideActive
 		seg.Transparency = isVisible and 0 or 1
 		seg.Parent = folder
 
@@ -238,7 +239,7 @@ local function setupCharacter(char)
 	tipSphere.Shape = Enum.PartType.Ball
 	tipSphere.Size = Vector3.new(tipDiameter, tipDiameter, tipDiameter)
 	tipSphere.Color = targetColor
-	tipSphere.CanCollide = false
+	tipSphere.CanCollide = isCanCollideActive
 	tipSphere.Transparency = isVisible and 0 or 1
 	tipSphere.Parent = folder
 
@@ -373,8 +374,8 @@ local function createDraggableUI(player)
 
 	local frame = Instance.new("Frame")
 	frame.Name = "MainFrame"
-	frame.Size = UDim2.new(0, 210, 0, 310)
-	frame.Position = UDim2.new(0.82, 0, 0.25, 0)
+	frame.Size = UDim2.new(0, 220, 0, 360)
+	frame.Position = UDim2.new(0.82, 0, 0.22, 0)
 	frame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 	frame.BorderSizePixel = 0
 	frame.Active = true
@@ -434,7 +435,6 @@ local function createDraggableUI(player)
 		btn.TextColor3 = Color3.fromRGB(210, 210, 220)
 		btn.Font = Enum.Font.GothamMedium
 		btn.TextSize = 11
-		btn.AutoButtonColor = true
 		btn.Parent = scrollContainer
 
 		local corner = Instance.new("UICorner")
@@ -450,14 +450,80 @@ local function createDraggableUI(player)
 		return btn
 	end
 
+	local function makeToggleRow(labelText, order, onClick)
+		local row = Instance.new("Frame")
+		row.Name = labelText .. "Row"
+		row.LayoutOrder = order
+		row.Size = UDim2.new(1, 0, 0, 28)
+		row.BackgroundColor3 = Color3.fromRGB(26, 26, 34)
+		row.BorderSizePixel = 0
+		row.Parent = scrollContainer
+
+		local rowCorner = Instance.new("UICorner")
+		rowCorner.CornerRadius = UDim.new(0, 6)
+		rowCorner.Parent = row
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -50, 1, 0)
+		label.Position = UDim2.new(0, 10, 0, 0)
+		label.BackgroundTransparency = 1
+		label.Text = labelText
+		label.TextColor3 = Color3.fromRGB(210, 210, 220)
+		label.Font = Enum.Font.GothamMedium
+		label.TextSize = 11
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = row
+
+		local track = Instance.new("TextButton")
+		track.Name = "Track"
+		track.Size = UDim2.new(0, 36, 0, 18)
+		track.Position = UDim2.new(1, -42, 0.5, -9)
+		track.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+		track.Text = ""
+		track.AutoButtonColor = false
+		track.Parent = row
+
+		local trackCorner = Instance.new("UICorner")
+		trackCorner.CornerRadius = UDim.new(1, 0)
+		trackCorner.Parent = track
+
+		local knob = Instance.new("Frame")
+		knob.Name = "Knob"
+		knob.Size = UDim2.new(0, 14, 0, 14)
+		knob.Position = UDim2.new(0, 2, 0.5, -7)
+		knob.BackgroundColor3 = Color3.fromRGB(200, 200, 210)
+		knob.BorderSizePixel = 0
+		knob.Parent = track
+
+		local knobCorner = Instance.new("UICorner")
+		knobCorner.CornerRadius = UDim.new(1, 0)
+		knobCorner.Parent = knob
+
+		local function updateState(state)
+			local targetPos = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+			local targetColor = state and Color3.fromRGB(0, 170, 90) or Color3.fromRGB(50, 50, 60)
+			
+			TweenService:Create(knob, TweenInfo.new(0.15), {Position = targetPos}):Play()
+			TweenService:Create(track, TweenInfo.new(0.15), {BackgroundColor3 = targetColor}):Play()
+		end
+
+		track.MouseButton1Click:Connect(function()
+			onClick()
+		end)
+
+		return updateState
+	end
+
 	local modeBtn = makeButton("ModeBtn", 1)
 	local sizeBtn = makeButton("SizeBtn", 2)
 	local lengthBtn = makeButton("LengthBtn", 3)
 	local colorBtn = makeButton("ColorBtn", 4)
 	local stiffBtn = makeButton("StiffBtn", 5)
-	local jimBtn = makeButton("JimBtn", 6)
-	local toggleBtn = makeButton("ToggleBtn", 7)
-	local visBtn = makeButton("VisBtn", 8)
+
+	local updateJimToggle = makeToggleRow("Jim Drops", 6, function() executeAction("JIM") end)
+	local updateStateToggle = makeToggleRow("State Running", 7, function() executeAction("TOGGLE") end)
+	local updateVisToggle = makeToggleRow("Visibility", 8, function() executeAction("VISIBILITY") end)
+	local updateCollideToggle = makeToggleRow("Can Collide", 9, function() executeAction("CANCOLLIDE") end)
 
 	local function updateUI()
 		modeBtn.Text = "Mode: " .. MODE
@@ -465,17 +531,14 @@ local function createDraggableUI(player)
 		lengthBtn.Text = "Length: " .. LENGTH
 		colorBtn.Text = "Color: " .. colorPresets[currentColorIndex].name
 		stiffBtn.Text = "Stiffness: " .. stiffnessPresets[currentStiffnessIndex]
-		
-		jimBtn.Text = isJimActive and "Jim Drops: ON" or "Jim Drops: OFF"
-		jimBtn.BackgroundColor3 = isJimActive and Color3.fromRGB(0, 110, 180) or Color3.fromRGB(32, 32, 40)
-		
-		toggleBtn.Text = isSimulationActive and "State: RUNNING" or "State: STOPPED"
-		toggleBtn.BackgroundColor3 = isSimulationActive and Color3.fromRGB(20, 130, 70) or Color3.fromRGB(150, 35, 35)
-		
-		visBtn.Text = isVisible and "Visibility: SHOWN (T)" or "Visibility: HIDDEN (T)"
+
+		updateJimToggle(isJimActive)
+		updateStateToggle(isSimulationActive)
+		updateVisToggle(isVisible)
+		updateCollideToggle(isCanCollideActive)
 	end
 
-	local function executeAction(action)
+	function executeAction(action)
 		if action == "MODE" then
 			currentModeIndex = (currentModeIndex % #modes) + 1
 			MODE = modes[currentModeIndex]
@@ -511,6 +574,18 @@ local function createDraggableUI(player)
 					end
 				end
 			end
+		elseif action == "CANCOLLIDE" then
+			isCanCollideActive = not isCanCollideActive
+			if player.Character then
+				local folder = player.Character:FindFirstChild("CustomModelFolder")
+				if folder then
+					for _, child in ipairs(folder:GetChildren()) do
+						if child:IsA("BasePart") then
+							child.CanCollide = isCanCollideActive
+						end
+					end
+				end
+			end
 		end
 		updateUI()
 	end
@@ -520,9 +595,6 @@ local function createDraggableUI(player)
 	lengthBtn.MouseButton1Click:Connect(function() executeAction("LENGTH") end)
 	colorBtn.MouseButton1Click:Connect(function() executeAction("COLOR") end)
 	stiffBtn.MouseButton1Click:Connect(function() executeAction("STIFFNESS") end)
-	jimBtn.MouseButton1Click:Connect(function() executeAction("JIM") end)
-	toggleBtn.MouseButton1Click:Connect(function() executeAction("TOGGLE") end)
-	visBtn.MouseButton1Click:Connect(function() executeAction("VISIBILITY") end)
 
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then return end
