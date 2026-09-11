@@ -2,7 +2,6 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local PhysicsService = game:GetService("PhysicsService")
 
 local LocalPlayer = Players.LocalPlayer or Players:GetPlayers()[1]
 
@@ -374,50 +373,91 @@ local function createDraggableUI(player)
 
 	local frame = Instance.new("Frame")
 	frame.Name = "MainFrame"
-	frame.Size = UDim2.new(0, 200, 0, 275)
-	frame.Position = UDim2.new(0.82, 0, 0.30, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	frame.Size = UDim2.new(0, 210, 0, 310)
+	frame.Position = UDim2.new(0.82, 0, 0.25, 0)
+	frame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+	frame.BorderSizePixel = 0
 	frame.Active = true
 	frame.Draggable = true
 	frame.Parent = sg
 
 	local uiCorner = Instance.new("UICorner")
-	uiCorner.CornerRadius = UDim.new(0, 8)
+	uiCorner.CornerRadius = UDim.new(0, 10)
 	uiCorner.Parent = frame
 
-	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(1, 0, 0, 25)
-	title.BackgroundTransparency = 1
-	title.Text = "Control Panel (Drag)"
-	title.TextColor3 = Color3.fromRGB(255, 255, 255)
-	title.Font = Enum.Font.SourceSansBold
-	title.TextSize = 14
-	title.Parent = frame
+	local uiStroke = Instance.new("UIStroke")
+	uiStroke.Color = Color3.fromRGB(45, 45, 55)
+	uiStroke.Thickness = 1
+	uiStroke.Parent = frame
 
-	local function makeButton(name, posY)
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.Size = UDim2.new(1, 0, 0, 32)
+	header.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+	header.BorderSizePixel = 0
+	header.Parent = frame
+
+	local headerCorner = Instance.new("UICorner")
+	headerCorner.CornerRadius = UDim.new(0, 10)
+	headerCorner.Parent = header
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -12, 1, 0)
+	title.Position = UDim2.new(0, 12, 0, 0)
+	title.BackgroundTransparency = 1
+	title.Text = "BPTC"
+	title.TextColor3 = Color3.fromRGB(240, 240, 245)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 14
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = header
+
+	local scrollContainer = Instance.new("Frame")
+	scrollContainer.Name = "Container"
+	scrollContainer.Size = UDim2.new(1, -16, 1, -44)
+	scrollContainer.Position = UDim2.new(0, 8, 0, 38)
+	scrollContainer.BackgroundTransparency = 1
+	scrollContainer.Parent = frame
+
+	local listLayout = Instance.new("UIListLayout")
+	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	listLayout.Padding = UDim.new(0, 6)
+	listLayout.Parent = scrollContainer
+
+	local function makeButton(name, order)
 		local btn = Instance.new("TextButton")
 		btn.Name = name
-		btn.Size = UDim2.new(0.9, 0, 0, 22)
-		btn.Position = UDim2.new(0.05, 0, 0, posY)
-		btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		btn.TextColor3 = Color3.fromRGB(220, 220, 220)
-		btn.Font = Enum.Font.SourceSans
-		btn.TextSize = 12
-		btn.Parent = frame
+		btn.LayoutOrder = order
+		btn.Size = UDim2.new(1, 0, 0, 26)
+		btn.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+		btn.BorderSizePixel = 0
+		btn.TextColor3 = Color3.fromRGB(210, 210, 220)
+		btn.Font = Enum.Font.GothamMedium
+		btn.TextSize = 11
+		btn.AutoButtonColor = true
+		btn.Parent = scrollContainer
+
 		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 4)
+		corner.CornerRadius = UDim.new(0, 6)
 		corner.Parent = btn
+
+		local btnStroke = Instance.new("UIStroke")
+		btnStroke.Color = Color3.fromRGB(50, 50, 62)
+		btnStroke.Thickness = 1
+		btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		btnStroke.Parent = btn
+
 		return btn
 	end
 
-	local modeBtn = makeButton("ModeBtn", 30)
-	local sizeBtn = makeButton("SizeBtn", 58)
-	local lengthBtn = makeButton("LengthBtn", 86)
-	local colorBtn = makeButton("ColorBtn", 114)
-	local stiffBtn = makeButton("StiffBtn", 142)
-	local jimBtn = makeButton("JimBtn", 170)
-	local toggleBtn = makeButton("ToggleBtn", 198)
-	local visBtn = makeButton("VisBtn", 226)
+	local modeBtn = makeButton("ModeBtn", 1)
+	local sizeBtn = makeButton("SizeBtn", 2)
+	local lengthBtn = makeButton("LengthBtn", 3)
+	local colorBtn = makeButton("ColorBtn", 4)
+	local stiffBtn = makeButton("StiffBtn", 5)
+	local jimBtn = makeButton("JimBtn", 6)
+	local toggleBtn = makeButton("ToggleBtn", 7)
+	local visBtn = makeButton("VisBtn", 8)
 
 	local function updateUI()
 		modeBtn.Text = "Mode: " .. MODE
@@ -425,10 +465,13 @@ local function createDraggableUI(player)
 		lengthBtn.Text = "Length: " .. LENGTH
 		colorBtn.Text = "Color: " .. colorPresets[currentColorIndex].name
 		stiffBtn.Text = "Stiffness: " .. stiffnessPresets[currentStiffnessIndex]
+		
 		jimBtn.Text = isJimActive and "Jim Drops: ON" or "Jim Drops: OFF"
-		jimBtn.BackgroundColor3 = isJimActive and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(40, 40, 40)
+		jimBtn.BackgroundColor3 = isJimActive and Color3.fromRGB(0, 110, 180) or Color3.fromRGB(32, 32, 40)
+		
 		toggleBtn.Text = isSimulationActive and "State: RUNNING" or "State: STOPPED"
-		toggleBtn.BackgroundColor3 = isSimulationActive and Color3.fromRGB(0, 150, 75) or Color3.fromRGB(180, 40, 40)
+		toggleBtn.BackgroundColor3 = isSimulationActive and Color3.fromRGB(20, 130, 70) or Color3.fromRGB(150, 35, 35)
+		
 		visBtn.Text = isVisible and "Visibility: SHOWN (T)" or "Visibility: HIDDEN (T)"
 	end
 
