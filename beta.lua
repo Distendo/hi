@@ -2,6 +2,7 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local PhysicsService = game:GetService("PhysicsService")
 
 local LocalPlayer = Players.LocalPlayer or Players:GetPlayers()[1]
 
@@ -17,9 +18,23 @@ local lengths = {"Short", "Normal", "Long"}
 local currentLengthIndex = 2
 local LENGTH = lengths[currentLengthIndex]
 
+local colorPresets = {
+	{ name = "Match Torso", color = nil },
+	{ name = "Hot Pink", color = Color3.fromRGB(255, 105, 180) },
+	{ name = "Neon Green", color = Color3.fromRGB(57, 255, 20) },
+	{ name = "Deep Blue", color = Color3.fromRGB(0, 102, 204) },
+	{ name = "Crimson Red", color = Color3.fromRGB(220, 20, 60) }
+}
+local currentColorIndex = 1
+
+local stiffnessPresets = { 50, 80, 150, 300 }
+local currentStiffnessIndex = 2
+
 local isVisible = true
 local isSimulationActive = true
 local isJimActive = false
+
+local renderConnection = nil
 
 local sizeScales = {
 	Small = 0.6,
@@ -33,23 +48,36 @@ local lengthSettings = {
 	Long = { count = 7, length = 0.9 }
 }
 
+local function getTargetColor(char)
+	local preset = colorPresets[currentColorIndex]
+	if preset.color then
+		return preset.color
+	end
+	local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+	return torso and torso.Color or Color3.fromRGB(255, 225, 0)
+end
+
 local function setupCharacter(char)
 	if not char then return end
 	local rootPart = char:WaitForChild("HumanoidRootPart", 10)
 	if not rootPart then return end
 	
+	if renderConnection then
+		renderConnection:Disconnect()
+		renderConnection = nil
+	end
+
 	local existingFolder = char:FindFirstChild("CustomModelFolder")
 	if existingFolder then existingFolder:Destroy() end
-	
+
 	local folder = Instance.new("Folder")
 	folder.Name = "CustomModelFolder"
 	folder.Parent = char
 
-	local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-	local targetColor = torso and torso.Color or Color3.fromRGB(255, 255, 0)
-
+	local targetColor = getTargetColor(char)
 	local sMult = sizeScales[SIZE]
 	local lData = lengthSettings[LENGTH]
+	local currentStiffness = stiffnessPresets[currentStiffnessIndex]
 
 	local baseSphereDiameter = 1.3 * sMult
 	local leftSphere = Instance.new("Part")
@@ -60,7 +88,7 @@ local function setupCharacter(char)
 	leftSphere.CanCollide = false
 	leftSphere.Transparency = isVisible and 0 or 1
 	leftSphere.Parent = folder
-	
+
 	local rightSphere = Instance.new("Part")
 	rightSphere.Name = "RightSphere"
 	rightSphere.Shape = Enum.PartType.Ball
@@ -69,16 +97,16 @@ local function setupCharacter(char)
 	rightSphere.CanCollide = false
 	rightSphere.Transparency = isVisible and 0 or 1
 	rightSphere.Parent = folder
-	
+
 	local baseDistX = 0.5 * sMult
 	local baseOffsetZ = -0.8 * sMult
-	
+
 	leftSphere.CFrame = rootPart.CFrame * CFrame.new(-baseDistX, -1.4, baseOffsetZ)
 	local w1 = Instance.new("WeldConstraint")
 	w1.Part0 = rootPart
 	w1.Part1 = leftSphere
 	w1.Parent = leftSphere
-	
+
 	rightSphere.CFrame = rootPart.CFrame * CFrame.new(baseDistX, -1.4, baseOffsetZ)
 	local w2 = Instance.new("WeldConstraint")
 	w2.Part0 = rootPart
@@ -88,7 +116,7 @@ local function setupCharacter(char)
 	local totalSegments = lData.count
 	local segmentLength = lData.length
 	local segmentDiameter = 1.1 * sMult
-	
+
 	local previousPart = rootPart
 	local baseOffset = CFrame.new(0, -1.2, -1.2 * sMult) * CFrame.Angles(0, math.rad(90), 0)
 	local stretchyParts = {}
@@ -102,7 +130,7 @@ local function setupCharacter(char)
 		seg.CanCollide = false
 		seg.Transparency = isVisible and 0 or 1
 		seg.Parent = folder
-		
+
 		table.insert(stretchyParts, seg)
 
 		if MODE == "anchored" or not isSimulationActive then
@@ -132,7 +160,7 @@ local function setupCharacter(char)
 			else
 				seg.Massless = true
 				seg.CFrame = previousPart.CFrame * CFrame.new(segmentLength, 0, 0)
-				
+
 				local att0 = Instance.new("Attachment")
 				att0.CFrame = CFrame.new(segmentLength / 2, 0, 0)
 				att0.Parent = previousPart
@@ -155,7 +183,7 @@ local function setupCharacter(char)
 				spring.Attachment0 = att0
 				spring.Attachment1 = att1
 				spring.FreeLength = 0
-				spring.Stiffness = 80
+				spring.Stiffness = currentStiffness
 				spring.Damping = 4
 				spring.Parent = seg
 
@@ -197,7 +225,7 @@ local function setupCharacter(char)
 			spring.Attachment0 = att0
 			spring.Attachment1 = att1
 			spring.FreeLength = 0
-			spring.Stiffness = 70
+			spring.Stiffness = currentStiffness
 			spring.Damping = 3.5
 			spring.Parent = seg
 
@@ -216,7 +244,7 @@ local function setupCharacter(char)
 	tipSphere.Parent = folder
 
 	tipSphere.CFrame = previousPart.CFrame * CFrame.new(segmentLength / 2 + (0.3 * sMult), 0, 0)
-	
+
 	if MODE == "anchored" or not isSimulationActive or MODE == "2 parts anchored" then
 		local tipWeld = Instance.new("WeldConstraint")
 		tipWeld.Part0 = previousPart
@@ -243,43 +271,48 @@ local function setupCharacter(char)
 		tipSpring.Attachment0 = tipAtt0
 		tipSpring.Attachment1 = tipAtt1
 		tipSpring.FreeLength = 0
-		tipSpring.Stiffness = 80
+		tipSpring.Stiffness = currentStiffness
 		tipSpring.Damping = 4
 		tipSpring.Parent = tipSphere
 	end
 
 	local lastDropTime = 0
-	local connection
-	connection = RunService.RenderStepped:Connect(function()
+	renderConnection = RunService.RenderStepped:Connect(function()
 		if not char or not char.Parent or not folder.Parent then
-			connection:Disconnect()
+			if renderConnection then
+				renderConnection:Disconnect()
+				renderConnection = nil
+			end
 			return
 		end
 
-		if isJimActive and isSimulationActive and (tick() - lastDropTime) > 0.12 then
-			lastDropTime = tick()
-			
+		if isJimActive and isSimulationActive and (os.clock() - lastDropTime) > 0.12 then
+			lastDropTime = os.clock()
+
 			local dropOrigin = tipSphere.Position
-			local dropSphereRadius = 0.35 * sMult
+			local dropRadius = 0.35 * sMult
 
 			local dropPart = Instance.new("Part")
-			dropPart.Name = "DropSphere"
+			dropPart.Name = "DropParticle"
 			dropPart.Shape = Enum.PartType.Ball
-			dropPart.Size = Vector3.new(dropSphereRadius * 2, dropSphereRadius * 2, dropSphereRadius * 2)
+			dropPart.Size = Vector3.new(dropRadius * 2, dropRadius * 2, dropRadius * 2)
 			dropPart.Color = Color3.fromRGB(255, 255, 255)
 			dropPart.Material = Enum.Material.SmoothPlastic
 			dropPart.CanCollide = false
 			dropPart.Anchored = false
 			dropPart.CFrame = CFrame.new(dropOrigin)
+			dropPart.AssemblyLinearVelocity = Vector3.new(0, -10, 0)
 			dropPart.Parent = workspace
 
 			task.spawn(function()
-				local dropStartTime = tick()
-				while tick() - dropStartTime < 1.2 do
-					local ray = Ray.new(dropPart.Position, Vector3.new(0, -0.6, 0))
-					local hitPart, hitPos, hitNormal = workspace:FindPartOnRayWithIgnoreList(ray, {char, folder, dropPart})
-					
-					if hitPart then
+				local dropStartTime = os.clock()
+				local raycastParams = RaycastParams.new()
+				raycastParams.FilterAncestorsOfKnownSubinstances = {char, folder, dropPart}
+				raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+				while (os.clock() - dropStartTime) < 1.2 and dropPart and dropPart.Parent do
+					local result = workspace:Raycast(dropPart.Position, Vector3.new(0, -0.8, 0), raycastParams)
+					if result then
 						local circleRadius = 0.5 * sMult
 						local surfaceCircle = Instance.new("Part")
 						surfaceCircle.Name = "DropCircle"
@@ -289,13 +322,12 @@ local function setupCharacter(char)
 						surfaceCircle.Material = Enum.Material.SmoothPlastic
 						surfaceCircle.CanCollide = false
 						surfaceCircle.Anchored = true
-						surfaceCircle.CFrame = CFrame.lookAt(hitPos + (hitNormal * 0.005), hitPos + hitNormal) * CFrame.Angles(0, math.rad(90), 0)
+						surfaceCircle.CFrame = CFrame.lookAt(result.Position + (result.Normal * 0.005), result.Position + result.Normal) * CFrame.Angles(0, math.rad(90), 0)
 						surfaceCircle.Parent = workspace
 
 						dropPart:Destroy()
 
-						local fadeInfo = TweenInfo.new(2, Enum.EasingStyle.Linear)
-						local fadeTween = TweenService:Create(surfaceCircle, fadeInfo, {Transparency = 1})
+						local fadeTween = TweenService:Create(surfaceCircle, TweenInfo.new(2, Enum.EasingStyle.Linear), {Transparency = 1})
 						fadeTween:Play()
 						fadeTween.Completed:Connect(function()
 							surfaceCircle:Destroy()
@@ -306,26 +338,7 @@ local function setupCharacter(char)
 				end
 
 				if dropPart and dropPart.Parent then
-					local circleRadius = 0.5 * sMult
-					local surfaceCircle = Instance.new("Part")
-					surfaceCircle.Name = "DropCircle"
-					surfaceCircle.Shape = Enum.PartType.Cylinder
-					surfaceCircle.Size = Vector3.new(0.01, circleRadius * 2, circleRadius * 2)
-					surfaceCircle.Color = Color3.fromRGB(255, 255, 255)
-					surfaceCircle.Material = Enum.Material.SmoothPlastic
-					surfaceCircle.CanCollide = false
-					surfaceCircle.Anchored = true
-					surfaceCircle.CFrame = CFrame.new(dropPart.Position) * CFrame.Angles(math.rad(90), 0, 0)
-					surfaceCircle.Parent = workspace
-
 					dropPart:Destroy()
-
-					local fadeInfo = TweenInfo.new(2, Enum.EasingStyle.Linear)
-					local fadeTween = TweenService:Create(surfaceCircle, fadeInfo, {Transparency = 1})
-					fadeTween:Play()
-					fadeTween.Completed:Connect(function()
-						surfaceCircle:Destroy()
-					end)
 				end
 			end)
 		end
@@ -361,9 +374,9 @@ local function createDraggableUI(player)
 
 	local frame = Instance.new("Frame")
 	frame.Name = "MainFrame"
-	frame.Size = UDim2.new(0, 190, 0, 210)
-	frame.Position = UDim2.new(0.85, 0, 0.35, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	frame.Size = UDim2.new(0, 200, 0, 275)
+	frame.Position = UDim2.new(0.82, 0, 0.30, 0)
+	frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 	frame.Active = true
 	frame.Draggable = true
 	frame.Parent = sg
@@ -381,78 +394,39 @@ local function createDraggableUI(player)
 	title.TextSize = 14
 	title.Parent = frame
 
-	local modeBtn = Instance.new("TextButton")
-	modeBtn.Name = "ModeButton"
-	modeBtn.Size = UDim2.new(0.9, 0, 0, 24)
-	modeBtn.Position = UDim2.new(0.05, 0, 0.14, 0)
-	modeBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	modeBtn.Text = "Mode: " .. MODE
-	modeBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-	modeBtn.Font = Enum.Font.SourceSans
-	modeBtn.TextSize = 12
-	modeBtn.Parent = frame
+	local function makeButton(name, posY)
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.Size = UDim2.new(0.9, 0, 0, 22)
+		btn.Position = UDim2.new(0.05, 0, 0, posY)
+		btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+		btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+		btn.Font = Enum.Font.SourceSans
+		btn.TextSize = 12
+		btn.Parent = frame
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 4)
+		corner.Parent = btn
+		return btn
+	end
 
-	local sizeBtn = Instance.new("TextButton")
-	sizeBtn.Name = "SizeButton"
-	sizeBtn.Size = UDim2.new(0.9, 0, 0, 24)
-	sizeBtn.Position = UDim2.new(0.05, 0, 0.28, 0)
-	sizeBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	sizeBtn.Text = "Thickness: " .. SIZE
-	sizeBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-	sizeBtn.Font = Enum.Font.SourceSans
-	sizeBtn.TextSize = 12
-	sizeBtn.Parent = frame
-
-	local lengthBtn = Instance.new("TextButton")
-	lengthBtn.Name = "LengthButton"
-	lengthBtn.Size = UDim2.new(0.9, 0, 0, 24)
-	lengthBtn.Position = UDim2.new(0.05, 0, 0.42, 0)
-	lengthBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	lengthBtn.Text = "Length: " .. LENGTH
-	lengthBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-	lengthBtn.Font = Enum.Font.SourceSans
-	lengthBtn.TextSize = 12
-	lengthBtn.Parent = frame
-
-	local jimBtn = Instance.new("TextButton")
-	jimBtn.Name = "JimButton"
-	jimBtn.Size = UDim2.new(0.9, 0, 0, 24)
-	jimBtn.Position = UDim2.new(0.05, 0, 0.56, 0)
-	jimBtn.BackgroundColor3 = isJimActive and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(45, 45, 45)
-	jimBtn.Text = isJimActive and "Jim: ON" or "Jim: OFF"
-	jimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	jimBtn.Font = Enum.Font.SourceSansBold
-	jimBtn.TextSize = 12
-	jimBtn.Parent = frame
-
-	local toggleBtn = Instance.new("TextButton")
-	toggleBtn.Name = "ToggleBtn"
-	toggleBtn.Size = UDim2.new(0.9, 0, 0, 24)
-	toggleBtn.Position = UDim2.new(0.05, 0, 0.70, 0)
-	toggleBtn.BackgroundColor3 = isSimulationActive and Color3.fromRGB(0, 150, 75) or Color3.fromRGB(180, 40, 40)
-	toggleBtn.Text = isSimulationActive and "State: RUNNING" or "State: STOPPED"
-	toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	toggleBtn.Font = Enum.Font.SourceSansBold
-	toggleBtn.TextSize = 12
-	toggleBtn.Parent = frame
-
-	local visBtn = Instance.new("TextButton")
-	visBtn.Name = "VisBtn"
-	visBtn.Size = UDim2.new(0.9, 0, 0, 24)
-	visBtn.Position = UDim2.new(0.05, 0, 0.84, 0)
-	visBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	visBtn.Text = isVisible and "Visibility: SHOWN (T)" or "Visibility: HIDDEN (T)"
-	visBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-	visBtn.Font = Enum.Font.SourceSans
-	visBtn.TextSize = 12
-	visBtn.Parent = frame
+	local modeBtn = makeButton("ModeBtn", 30)
+	local sizeBtn = makeButton("SizeBtn", 58)
+	local lengthBtn = makeButton("LengthBtn", 86)
+	local colorBtn = makeButton("ColorBtn", 114)
+	local stiffBtn = makeButton("StiffBtn", 142)
+	local jimBtn = makeButton("JimBtn", 170)
+	local toggleBtn = makeButton("ToggleBtn", 198)
+	local visBtn = makeButton("VisBtn", 226)
 
 	local function updateUI()
 		modeBtn.Text = "Mode: " .. MODE
 		sizeBtn.Text = "Thickness: " .. SIZE
 		lengthBtn.Text = "Length: " .. LENGTH
-		jimBtn.Text = isJimActive and "Jim: ON" or "Jim: OFF"
-		jimBtn.BackgroundColor3 = isJimActive and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(45, 45, 45)
+		colorBtn.Text = "Color: " .. colorPresets[currentColorIndex].name
+		stiffBtn.Text = "Stiffness: " .. stiffnessPresets[currentStiffnessIndex]
+		jimBtn.Text = isJimActive and "Jim Drops: ON" or "Jim Drops: OFF"
+		jimBtn.BackgroundColor3 = isJimActive and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(40, 40, 40)
 		toggleBtn.Text = isSimulationActive and "State: RUNNING" or "State: STOPPED"
 		toggleBtn.BackgroundColor3 = isSimulationActive and Color3.fromRGB(0, 150, 75) or Color3.fromRGB(180, 40, 40)
 		visBtn.Text = isVisible and "Visibility: SHOWN (T)" or "Visibility: HIDDEN (T)"
@@ -470,6 +444,12 @@ local function createDraggableUI(player)
 		elseif action == "LENGTH" then
 			currentLengthIndex = (currentLengthIndex % #lengths) + 1
 			LENGTH = lengths[currentLengthIndex]
+			if player.Character then setupCharacter(player.Character) end
+		elseif action == "COLOR" then
+			currentColorIndex = (currentColorIndex % #colorPresets) + 1
+			if player.Character then setupCharacter(player.Character) end
+		elseif action == "STIFFNESS" then
+			currentStiffnessIndex = (currentStiffnessIndex % #stiffnessPresets) + 1
 			if player.Character then setupCharacter(player.Character) end
 		elseif action == "JIM" then
 			isJimActive = not isJimActive
@@ -495,6 +475,8 @@ local function createDraggableUI(player)
 	modeBtn.MouseButton1Click:Connect(function() executeAction("MODE") end)
 	sizeBtn.MouseButton1Click:Connect(function() executeAction("SIZE") end)
 	lengthBtn.MouseButton1Click:Connect(function() executeAction("LENGTH") end)
+	colorBtn.MouseButton1Click:Connect(function() executeAction("COLOR") end)
+	stiffBtn.MouseButton1Click:Connect(function() executeAction("STIFFNESS") end)
 	jimBtn.MouseButton1Click:Connect(function() executeAction("JIM") end)
 	toggleBtn.MouseButton1Click:Connect(function() executeAction("TOGGLE") end)
 	visBtn.MouseButton1Click:Connect(function() executeAction("VISIBILITY") end)
@@ -507,6 +489,8 @@ local function createDraggableUI(player)
 			executeAction("VISIBILITY")
 		end
 	end)
+
+	updateUI()
 end
 
 if LocalPlayer then
