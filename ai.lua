@@ -1,6 +1,6 @@
 --[[ UUrIntelligence ALT ASSISTANT - LOCALSCRIPT ONLY - v2
   Owner: UUshshsh_78 | Bot accounts: UUrIntelligence
-  NO Server Script. NO key. Free + unlimited. Real player (alt), NOT a visual clone.
+  NO Server Script. Real player (alt), NOT a visual clone. Real AI = Gemini 3.5 Flash-Lite.
   HOW TO USE (pick one):
    A) YOUR OWN GAME: StarterPlayer > StarterPlayerScripts > LocalScript, paste this whole file. Both main+alt auto get role.
    B) EXECUTOR on ALT only: execute this file on UUrIntelligence. Do NOT execute on main.
@@ -10,9 +10,11 @@
 ]]
 local OWNER_NAME = "UUshshsh_78"
 local ALT_NAMES = { UUrIntelligence = true }
--- OPTIONAL online hook (executor only). Leave "" for pure offline (recommended).
--- Example later: "https://your-free-worker/?q=%s" must return plain text, %s = url-encoded prompt.
-local AI_URL = ""
+-- REAL AI: Google Gemini 3.5 Flash-Lite (cheapest flash model, tested working).
+-- Key belongs to you. Do NOT share this file - anyone with it spends your quota.
+local AI_GEMINI_KEY = "AQ.Ab8RN6KAzTIjpXQZDBDcrr6qquMehZWJPQ2wGHIxm3TyFhlWkQ"
+local AI_MODEL = "gemini-3.5-flash-lite"
+local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. Reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
 
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
@@ -126,21 +128,54 @@ local function safeCalc(expr)
   return nil
 end
 
--- online attempt (executor http only), else nil -> offline brain
-local function tryOnline(prompt)
-  if AI_URL == "" then return nil end
+-- REAL AI via Gemini generateContent (executor http only). Returns string or nil -> offline fallback.
+local lastAIError, aiBusy = "never called", false
+local function askAI(userText)
+  if AI_GEMINI_KEY == "" then lastAIError = "no key set" return nil end
+  if aiBusy then lastAIError = "busy, try again" return nil end
   local hr = (getgenv and (getgenv().http_request or getgenv().request)) or http_request or request
-  if not hr then return nil end
-  local url = string.format(AI_URL, HttpService:UrlEncode(string.sub(prompt, 1, 300)))
-  local ok, res = pcall(function() return hr({ Url = url, Method = "GET" }) end)
-  if ok and res and res.StatusCode == 200 then
-    local body = tostring(res.Body or "")
-    if #body > 2 and #body < 600 then return body end
-  end
-  return nil
+  if not hr then lastAIError = "no http fn (need executor)" return nil end
+  aiBusy = true
+  local done, result = false, nil
+  task.spawn(function()
+    local ok, res = pcall(function()
+      return hr({
+        Url = "https://generativelanguage.googleapis.com/v1beta/models/" .. AI_MODEL .. ":generateContent?key=" .. AI_GEMINI_KEY,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode({
+          system_instruction = {parts = {{text = AI_SYSTEM}}},
+          contents = {{parts = {{text = string.sub(userText, 1, 300)}}}},
+          generationConfig = {maxOutputTokens = 120, temperature = 0.9},
+        }),
+      })
+    end)
+    if ok and res and res.StatusCode == 200 then
+      local ok2, j = pcall(function() return HttpService:JSONDecode(tostring(res.Body or "")) end)
+      local t = ok2 and j and j.candidates and j.candidates[1] and j.candidates[1].content
+        and j.candidates[1].content.parts and j.candidates[1].content.parts[1]
+        and j.candidates[1].content.parts[1].text
+      if t and #t > 1 then
+        result = string.sub(string.gsub(t, "%s+", " "), 1, 190)
+        lastAIError = "ok"
+      else
+        lastAIError = "empty reply"
+      end
+    elseif ok and res then
+      lastAIError = "code " .. tostring(res.StatusCode)
+    else
+      lastAIError = "http fail"
+    end
+    done = true
+  end)
+  local t0 = os.clock()
+  while not done and os.clock() - t0 < 15 do task.wait(0.1) end
+  if not done then lastAIError = "timeout" end
+  aiBusy = false
+  return result
 end
 
-local HELP = "!help !follow !stay !come !jump !spin !dance !sit !stand !reset !mute !unmute !joke !calc <e> !time !date !remember k=v !recall k !orbit [off] !about"
+local HELP = "!help !ask <q> !aistatus !follow !stay !come !jump !spin !dance !sit !stand !reset !mute !unmute !joke !calc <e> !time !date !remember k=v !recall k !orbit [off] !about"
 local function brain(raw)
   local msg = string.gsub(string.gsub(raw, "^%s+", ""), "%s+$", "")
   local lower = string.lower(msg)
@@ -169,9 +204,17 @@ local function brain(raw)
   if string.find(lower, "thank") then return "Always, sir." end
   if string.find(lower, "help") or string.find(lower, "stuck") or string.find(lower, "save me") then teleportToOwner() return "With you, sir. State your order." end
   if string.find(lower, "where are you") then teleportToOwner() return "Beside you, sir." end
-  local online = tryOnline(msg)
-  if online then return online end
-  return FALLBACKS[math.random(1, #FALLBACKS)]
+  if string.sub(lower, 1, 4) == "!ask" or string.sub(lower, 1, 3) == "!ai" then
+    local q = msg:match("^[!][Aa][Ss][Kk]%s+(.+)$") or msg:match("^[!][Aa][Ii]%s+(.+)$")
+    if not q or q == "" then return "Ask me anything, sir. !ask <question>." end
+    return askAI(q) or (FALLBACKS[math.random(1, #FALLBACKS)] .. " (AI offline: " .. lastAIError .. ")")
+  end
+  if lower == "!aistatus" then
+    if AI_GEMINI_KEY == "" then return "AI brain: OFFLINE (no key), sir." end
+    return "AI brain: " .. AI_MODEL .. ", last call: " .. lastAIError .. ", sir."
+  end
+  -- natural chat -> REAL AI, offline fallback if key missing/fails
+  return askAI(msg) or FALLBACKS[math.random(1, #FALLBACKS)]
 end
 
 -- actions on OWN (alt) character
