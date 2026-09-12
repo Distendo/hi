@@ -13,8 +13,9 @@ local ALT_NAMES = { UUrIntelligence = true }
 -- REAL AI: Google Gemini 3.5 Flash-Lite (cheapest flash model, tested working).
 -- Key belongs to you. Do NOT share this file - anyone with it spends your quota.
 local AI_GEMINI_KEY = "AQ.Ab8RN6KAzTIjpXQZDBDcrr6qquMehZWJPQ2wGHIxm3TyFhlWkQ"
+AI_GEMINI_KEY = string.gsub(AI_GEMINI_KEY, "%s+", "") -- ignore accidental spaces/newlines in paste
 local AI_MODEL = "gemini-3.5-flash-lite"
-local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. You are professional - you only need to remember that. You are a professional tool , not a servant. You control the bot body with tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Use a tool whenever the boss asks for an action, then confirm briefly. Otherwise reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
+local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. You control the bot body with tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Use a tool whenever the boss asks for an action, then confirm briefly. Otherwise reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
 
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
@@ -160,7 +161,7 @@ local function buildTools()
   cc.type = "OBJECT"
   cc.properties = {expression = {type = "STRING"}}
   cc.required = {"expression"}
-  fd[17] = {name = "calc", description = "Calculate a math expression like 1+1", parameters = cc}
+  fd[17] = {name = "calc", description = "Calculate a math expression like 12*8+5", parameters = cc}
   local tools = {}
   tools[1] = {function_declarations = fd}
   return tools
@@ -170,7 +171,7 @@ local function runTool(name, args)
   args = args or {}
   if name == "follow" then following = true orbiting = false return "now following"
   elseif name == "stay" then following = false return "holding position"
-  elseif name == "come" then teleportToOwner() return "teleported to UU"
+  elseif name == "come" then teleportToOwner() return "teleported to boss"
   elseif name == "jump" then jump() return "jumped"
   elseif name == "spin" then spin() return "spinning"
   elseif name == "dance" then dance() return "dancing"
@@ -435,6 +436,6 @@ makeSmallPro()
 task.spawn(function()
   while not getOwner() do task.wait(1) end
   task.wait(2)
-  altSay("UUrIntelligence online, sir. Professional. !help for commands.")
+  altSay("UUrIntelligence online, sir. Small, professional, unlimited. !help for orders.")
 end)
 print("[ALT-AI] running as " .. LocalPlayer.Name)
