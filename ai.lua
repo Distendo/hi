@@ -12,7 +12,7 @@ local OWNER_NAME = "UUshshsh_78"
 local ALT_NAMES = { UUrIntelligence = true }
 -- REAL AI: Google Gemini 3.5 Flash-Lite (cheapest flash model, tested working).
 -- Key belongs to you. Do NOT share this file - anyone with it spends your quota.
-local AI_GEMINI_KEY = "AQ.Ab8RN6KAzTIjpXQZDBDcrr6qquMehZWJPQ2wGHIxm3TyFhlWkQ"
+local AI_GEMINI_KEY = "AQ.Ab8RN6IaPEt9HWYck86I7UM3nUZ2IorFLAw-oZyFJ-wggLZiCA"
 AI_GEMINI_KEY = string.gsub(AI_GEMINI_KEY, "%s+", "") -- ignore accidental spaces/newlines in paste
 local AI_MODEL = "gemini-3.5-flash-lite"
 local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. You control the bot body with tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Use a tool whenever the boss asks for an action, then confirm briefly. Otherwise reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
