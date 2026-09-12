@@ -215,8 +215,7 @@ local function zen(messages, withTools)
   req.model = AI_MODEL
   req.messages = messages
   req.max_tokens = 150
-  req.temperature = 0.7
-  if withTools then req.tools = buildZenTools() end
+  if withTools and not noToolsMode then req.tools = buildZenTools() end
   local headers = {}
   headers["Content-Type"] = "application/json"
   if ZEN_KEY ~= "" then headers["Authorization"] = "Bearer " .. ZEN_KEY end
@@ -229,7 +228,10 @@ local function zen(messages, withTools)
     })
   end)
   if not (ok and res) then return nil, "http fail" end
-  if res.StatusCode ~= 200 then return nil, "code " .. tostring(res.StatusCode) end
+  if res.StatusCode ~= 200 then
+    lastAIBody = string.sub(string.gsub(tostring(res.Body or ""), "%s+", " "), 1, 160)
+    return nil, "code " .. tostring(res.StatusCode)
+  end
   local ok2, j = pcall(function() return HttpService:JSONDecode(tostring(res.Body or "")) end)
   if not ok2 or not j then return nil, "bad json" end
   return j, "ok"
@@ -264,6 +266,7 @@ end
 
 -- REAL AI with tools: round 1 may trigger body actions, round 2 confirms briefly.
 local lastAIError, aiBusy = "never called", false
+local lastAIBody, noToolsMode = "", false
 local function askAI(userText)
   if aiBusy then lastAIError = "busy, try again" return nil end
   aiBusy = true
@@ -273,6 +276,10 @@ local function askAI(userText)
     m1[1] = {role = "system", content = AI_SYSTEM}
     m1[2] = {role = "user", content = string.sub(userText, 1, 300)}
     local j, err = zen(m1, true)
+    if not j and err == "code 400" and not noToolsMode then
+      noToolsMode = true -- gateway dislikes our tools shape: retry plain chat
+      j, err = zen(m1, false)
+    end
     if not j then lastAIError = err done = true return end
     local text, calls = msgOf(j)
     if not calls then
@@ -337,7 +344,10 @@ local function brain(raw)
     return askAI(q) or (FALLBACKS[math.random(1, #FALLBACKS)] .. " (AI offline: " .. lastAIError .. ")")
   end
   if lower == "!aistatus" then
-    return "AI brain: " .. AI_MODEL .. " (keyless), last call: " .. lastAIError .. ", sir."
+    local s = "AI brain: " .. AI_MODEL .. " (keyless), last call: " .. lastAIError .. ", sir."
+    if noToolsMode then s = s .. " [tools off]" end
+    if lastAIBody ~= "" then s = s .. " srv: " .. lastAIBody end
+    return string.sub(s, 1, 400)
   end
   -- natural chat -> REAL AI, offline fallback if key missing/fails
   return askAI(msg) or FALLBACKS[math.random(1, #FALLBACKS)]
