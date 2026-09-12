@@ -14,7 +14,7 @@ local ALT_NAMES = { UUrIntelligence = true }
 -- Key belongs to you. Do NOT share this file - anyone with it spends your quota.
 local AI_GEMINI_KEY = "AQ.Ab8RN6KAzTIjpXQZDBDcrr6qquMehZWJPQ2wGHIxm3TyFhlWkQ"
 local AI_MODEL = "gemini-3.5-flash-lite"
-local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. Reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
+local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. You are professional - you only need to remember that. You are a professional tool , not a servant. You control the bot body with tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Use a tool whenever the boss asks for an action, then confirm briefly. Otherwise reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
 
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
@@ -37,6 +37,7 @@ local function getOwner() return Players:FindFirstChild(OWNER_NAME) end
 
 -- state
 local muted, following, orbiting = false, true, false
+local replyForce = false
 local memory, lastReply = {}, 0
 
 -- CHAT MODE: "send" = real replicated chat via RBXGeneral:SendAsync (everyone sees it).
@@ -128,54 +129,163 @@ local function safeCalc(expr)
   return nil
 end
 
--- REAL AI via Gemini generateContent (executor http only). Returns string or nil -> offline fallback.
+-- GEMINI TOOLS: everything the AI is allowed to do with the body (statement-built, no deep literals)
+local function buildTools()
+  local fd = {}
+  fd[1] = {name = "follow", description = "Resume following the boss"}
+  fd[2] = {name = "stay", description = "Stop moving and hold position"}
+  fd[3] = {name = "come", description = "Teleport to the boss right now"}
+  fd[4] = {name = "jump", description = "Jump"}
+  fd[5] = {name = "spin", description = "Spin around in place"}
+  fd[6] = {name = "dance", description = "Do a dance"}
+  fd[7] = {name = "sit", description = "Sit down"}
+  fd[8] = {name = "stand", description = "Stand up"}
+  fd[9] = {name = "orbit", description = "Orbit around the boss"}
+  fd[10] = {name = "orbit_off", description = "Stop orbiting"}
+  fd[11] = {name = "mute", description = "Mute yourself until unmuted"}
+  fd[12] = {name = "unmute", description = "Unmute yourself"}
+  local rm = {}
+  rm.type = "OBJECT"
+  rm.properties = {key = {type = "STRING"}, value = {type = "STRING"}}
+  rm.required = {"key", "value"}
+  fd[13] = {name = "remember", description = "Remember a fact about the boss", parameters = rm}
+  local rc = {}
+  rc.type = "OBJECT"
+  rc.properties = {key = {type = "STRING"}}
+  rc.required = {"key"}
+  fd[14] = {name = "recall", description = "Recall a remembered fact", parameters = rc}
+  fd[15] = {name = "get_time", description = "What time is it"}
+  fd[16] = {name = "get_date", description = "What is today's date"}
+  local cc = {}
+  cc.type = "OBJECT"
+  cc.properties = {expression = {type = "STRING"}}
+  cc.required = {"expression"}
+  fd[17] = {name = "calc", description = "Calculate a math expression like 1+1", parameters = cc}
+  local tools = {}
+  tools[1] = {function_declarations = fd}
+  return tools
+end
+
+local function runTool(name, args)
+  args = args or {}
+  if name == "follow" then following = true orbiting = false return "now following"
+  elseif name == "stay" then following = false return "holding position"
+  elseif name == "come" then teleportToOwner() return "teleported to UU"
+  elseif name == "jump" then jump() return "jumped"
+  elseif name == "spin" then spin() return "spinning"
+  elseif name == "dance" then dance() return "dancing"
+  elseif name == "sit" then sit(true) return "sitting"
+  elseif name == "stand" then sit(false) return "standing"
+  elseif name == "orbit" then orbiting = true following = true return "orbiting"
+  elseif name == "orbit_off" then orbiting = false return "orbit off"
+  elseif name == "mute" then muted = true replyForce = true return "muted"
+  elseif name == "unmute" then muted = false replyForce = true return "unmuted"
+  elseif name == "remember" then
+    if args.key and args.value then memory[string.lower(tostring(args.key))] = tostring(args.value) return "remembered" end
+    return "need key and value"
+  elseif name == "recall" then
+    local v = args.key and memory[string.lower(tostring(args.key))]
+    if v then return tostring(args.key) .. " = " .. v end
+    return "nothing remembered"
+  elseif name == "get_time" then return os.date("%I:%M %p")
+  elseif name == "get_date" then return os.date("%A, %B %d")
+  elseif name == "calc" then return safeCalc(tostring(args.expression or "")) or "bad expression"
+  end
+  return "unknown tool"
+end
+
+local function trim190(s)
+  s = string.gsub(s, "%s+", " ")
+  return string.sub(s, 1, 190)
+end
+
+-- raw Gemini call, returns decoded json or nil+err
+local function gemini(contents, withTools)
+  local hr = (getgenv and (getgenv().http_request or getgenv().request)) or http_request or request
+  if not hr then return nil, "no http fn (need executor)" end
+  local req = {}
+  req.system_instruction = {parts = {{text = AI_SYSTEM}}}
+  if withTools then req.tools = buildTools() end
+  req.contents = contents
+  req.generationConfig = {maxOutputTokens = 150, temperature = 0.7}
+  local ok, res = pcall(function()
+    return hr({
+      Url = "https://generativelanguage.googleapis.com/v1beta/models/" .. AI_MODEL .. ":generateContent?key=" .. AI_GEMINI_KEY,
+      Method = "POST",
+      Headers = {["Content-Type"] = "application/json"},
+      Body = HttpService:JSONEncode(req),
+    })
+  end)
+  if not (ok and res) then return nil, "http fail" end
+  if res.StatusCode ~= 200 then return nil, "code " .. tostring(res.StatusCode) end
+  local ok2, j = pcall(function() return HttpService:JSONDecode(tostring(res.Body or "")) end)
+  if not ok2 or not j then return nil, "bad json" end
+  return j, "ok"
+end
+
+local function textOf(j)
+  local parts = j.candidates and j.candidates[1] and j.candidates[1].content and j.candidates[1].content.parts
+  if not parts then return nil end
+  local t = {}
+  for _, p in ipairs(parts) do
+    if p.text and p.text ~= "" then t[#t + 1] = p.text end
+  end
+  if #t == 0 then return nil end
+  return trim190(table.concat(t, " "))
+end
+
+local function callsOf(j)
+  local parts = j.candidates and j.candidates[1] and j.candidates[1].content and j.candidates[1].content.parts
+  if not parts then return nil end
+  local calls = {}
+  for _, p in ipairs(parts) do
+    if p.functionCall then calls[#calls + 1] = p.functionCall end
+  end
+  if #calls == 0 then return nil end
+  return calls
+end
+
+-- REAL AI with tools: round 1 may trigger body actions, round 2 confirms briefly.
 local lastAIError, aiBusy = "never called", false
 local function askAI(userText)
   if AI_GEMINI_KEY == "" then lastAIError = "no key set" return nil end
   if aiBusy then lastAIError = "busy, try again" return nil end
-  local hr = (getgenv and (getgenv().http_request or getgenv().request)) or http_request or request
-  if not hr then lastAIError = "no http fn (need executor)" return nil end
   aiBusy = true
   local done, result = false, nil
   task.spawn(function()
-    local ok, res = pcall(function()
-      return hr({
-        Url = "https://generativelanguage.googleapis.com/v1beta/models/" .. AI_MODEL .. ":generateContent?key=" .. AI_GEMINI_KEY,
-        Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
-        Body = HttpService:JSONEncode({
-          system_instruction = {parts = {{text = AI_SYSTEM}}},
-          contents = {{parts = {{text = string.sub(userText, 1, 300)}}}},
-          generationConfig = {maxOutputTokens = 120, temperature = 0.9},
-        }),
-      })
-    end)
-    if ok and res and res.StatusCode == 200 then
-      local ok2, j = pcall(function() return HttpService:JSONDecode(tostring(res.Body or "")) end)
-      local t = ok2 and j and j.candidates and j.candidates[1] and j.candidates[1].content
-        and j.candidates[1].content.parts and j.candidates[1].content.parts[1]
-        and j.candidates[1].content.parts[1].text
-      if t and #t > 1 then
-        result = string.sub(string.gsub(t, "%s+", " "), 1, 190)
-        lastAIError = "ok"
-      else
-        lastAIError = "empty reply"
-      end
-    elseif ok and res then
-      lastAIError = "code " .. tostring(res.StatusCode)
-    else
-      lastAIError = "http fail"
+    local c1 = {}
+    c1[1] = {parts = {{text = string.sub(userText, 1, 300)}}}
+    local j, err = gemini(c1, true)
+    if not j then lastAIError = err done = true return end
+    local calls = callsOf(j)
+    if not calls then
+      local t = textOf(j)
+      if t then result = t lastAIError = "ok" else lastAIError = "empty reply" end
+      done = true return
     end
+    local did = {}
+    for _, c in ipairs(calls) do
+      did[#did + 1] = tostring(c.name) .. " -> " .. runTool(c.name, c.args)
+    end
+    local c2 = {}
+    c2[1] = {parts = {{text = "You just performed: " .. table.concat(did, "; ") .. ". Confirm to boss briefly, under 120 characters."}}}
+    local j2, err2 = gemini(c2, false)
+    if j2 then
+      local t2 = textOf(j2)
+      if t2 then result = t2 lastAIError = "ok+tools" done = true return end
+    end
+    lastAIError = "tools done (" .. tostring(err2) .. ")"
+    result = "Done, sir."
     done = true
   end)
   local t0 = os.clock()
-  while not done and os.clock() - t0 < 15 do task.wait(0.1) end
+  while not done and os.clock() - t0 < 20 do task.wait(0.1) end
   if not done then lastAIError = "timeout" end
   aiBusy = false
   return result
 end
 
-local HELP = "!help !ask <q> !aistatus !follow !stay !come !jump !spin !dance !sit !stand !reset !mute !unmute !joke !calc <e> !time !date !remember k=v !recall k !orbit [off] !about"
+local HELP = "!help !ask <q> !aistatus !tools !follow !stay !come !jump !spin !dance !sit !stand !reset !mute !unmute !joke !calc <e> !time !date !remember k=v !recall k !orbit [off] !about"
 local function brain(raw)
   local msg = string.gsub(string.gsub(raw, "^%s+", ""), "%s+$", "")
   local lower = string.lower(msg)
@@ -188,8 +298,8 @@ local function brain(raw)
   if lower == "!dance" then dance() return "At your service, sir." end
   if lower == "!sit" then sit(true) return "Seated, sir." end
   if lower == "!stand" then sit(false) return "Standing by, sir." end
-  if lower == "!mute" then muted = true return "Muted, sir. !unmute to resume.", true end
-  if lower == "!unmute" or lower == "!talk" then muted = false return "Back online, sir.", true end
+  if lower == "!mute" then muted = true replyForce = true return "Muted, sir. !unmute to resume." end
+  if lower == "!unmute" or lower == "!talk" then muted = false replyForce = true return "Back online, sir." end
   if lower == "!joke" then return JOKES[math.random(1, #JOKES)] end
   if string.sub(lower, 1, 5) == "!calc" then local r = safeCalc(string.sub(msg, 7)) if r then return "Result: " .. r end return "Usage: !calc 12*8+5, sir." end
   if lower == "!time" then return "Time: " .. os.date("%I:%M %p") .. ", sir." end
@@ -198,7 +308,8 @@ local function brain(raw)
   if string.sub(lower, 1, 7) == "!recall" then local v = memory[string.lower((string.sub(msg, 9)):match("^%s*(.-)%s*$") or "")] if v then return v .. ", sir." end return "No record, sir." end
   if lower == "!orbit" then orbiting = true following = true return "Orbiting, sir." end
   if lower == "!orbit off" then orbiting = false return "Orbit off, sir." end
-  if lower == "!about" then return "UUrIntelligence, your assistant. LocalScript only, unlimited, I answer only to UUshshsh_78." end
+  if lower == "!about" then return "UUrIntelligence, your Gemini-powered assistant. I hear only UUshshsh_78 and can move this body. Try !tools." end
+  if lower == "!tools" then return "Body tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Just tell me, sir." end
   if lower == "hi" or lower == "hello" or lower == "hey" then return "Hello sir. Ready to assist." end
   if string.find(lower, "how are you") then return "Operational, sir. How are you?" end
   if string.find(lower, "thank") then return "Always, sir." end
@@ -251,7 +362,10 @@ local function onOwnerMsg(raw)
   lastHeard, lastHeardT = raw, os.clock()
   local low = string.lower(raw)
   if muted and not (string.find(low, "!unmute") or low == "!talk") then return end
-  altSay(brain(raw))
+  replyForce = false
+  local reply = brain(raw)
+  if reply and reply ~= "" then altSay(reply, replyForce) end
+  replyForce = false
 end
 
 -- listen ONLY to owner (multi-hook: legacy Chatted on every player slot + new TextChatService)
@@ -321,6 +435,6 @@ makeSmallPro()
 task.spawn(function()
   while not getOwner() do task.wait(1) end
   task.wait(2)
-  altSay("UUrIntelligence online, sir. Small, professional, unlimited. !help for orders.")
+  altSay("UUrIntelligence online, sir. Professional. !help for commands.")
 end)
 print("[ALT-AI] running as " .. LocalPlayer.Name)
