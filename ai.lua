@@ -1,6 +1,6 @@
 --[[ UUrIntelligence ALT ASSISTANT - LOCALSCRIPT ONLY - v2
   Owner: UUshshsh_78 | Bot accounts: UUrIntelligence
-  NO Server Script. Real player (alt), NOT a visual clone. Real AI = Gemini 3.5 Flash-Lite.
+  NO Server Script. NO api key. Real player (alt), NOT a visual clone. Real AI = Zen mimo-v2.5-free.
   HOW TO USE (pick one):
    A) YOUR OWN GAME: StarterPlayer > StarterPlayerScripts > LocalScript, paste this whole file. Both main+alt auto get role.
    B) EXECUTOR on ALT only: execute this file on UUrIntelligence. Do NOT execute on main.
@@ -10,11 +10,11 @@
 ]]
 local OWNER_NAME = "UUshshsh_78"
 local ALT_NAMES = { UUrIntelligence = true }
--- REAL AI: Google Gemini 3.5 Flash-Lite (cheapest flash model, tested working).
--- Key belongs to you. Do NOT share this file - anyone with it spends your quota.
-local AI_GEMINI_KEY = "AQ.Ab8RN6IaPEt9HWYck86I7UM3nUZ2IorFLAw-oZyFJ-wggLZiCA"
-AI_GEMINI_KEY = string.gsub(AI_GEMINI_KEY, "%s+", "") -- ignore accidental spaces/newlines in paste
-local AI_MODEL = "gemini-3.5-flash-lite"
+-- REAL AI: OpenCode Zen "mimo-v2.5-free" - FREE, NO api key, OpenAI-compatible.
+-- Free models are free for a limited feedback period; prompts may help improve the model.
+-- Optional escape hatch: paste a Zen key as ZEN_KEY if keyless ever stops working.
+local ZEN_KEY = ""
+local AI_MODEL = "mimo-v2.5-free"
 local AI_SYSTEM = "You are UUrIntelligence, a small professional Roblox assistant serving your boss UUshshsh_78. You control the bot body with tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Use a tool whenever the boss asks for an action, then confirm briefly. Otherwise reply short, under 180 characters, friendly, a little slang, no hashtags, plain text only."
 
 local Players = game:GetService("Players")
@@ -130,40 +130,47 @@ local function safeCalc(expr)
   return nil
 end
 
--- GEMINI TOOLS: everything the AI is allowed to do with the body (statement-built, no deep literals)
-local function buildTools()
+-- ZEN TOOLS: OpenAI-compatible declarations (statement-built, no deep literals).
+-- NOTE: "function" is a reserved word in Luau, so it is assigned via t["function"].
+local function buildZenTools()
   local fd = {}
-  fd[1] = {name = "follow", description = "Resume following the boss"}
-  fd[2] = {name = "stay", description = "Stop moving and hold position"}
-  fd[3] = {name = "come", description = "Teleport to the boss right now"}
-  fd[4] = {name = "jump", description = "Jump"}
-  fd[5] = {name = "spin", description = "Spin around in place"}
-  fd[6] = {name = "dance", description = "Do a dance"}
-  fd[7] = {name = "sit", description = "Sit down"}
-  fd[8] = {name = "stand", description = "Stand up"}
-  fd[9] = {name = "orbit", description = "Orbit around the boss"}
-  fd[10] = {name = "orbit_off", description = "Stop orbiting"}
-  fd[11] = {name = "mute", description = "Mute yourself until unmuted"}
-  fd[12] = {name = "unmute", description = "Unmute yourself"}
-  local rm = {}
-  rm.type = "OBJECT"
-  rm.properties = {key = {type = "STRING"}, value = {type = "STRING"}}
-  rm.required = {"key", "value"}
-  fd[13] = {name = "remember", description = "Remember a fact about the boss", parameters = rm}
-  local rc = {}
-  rc.type = "OBJECT"
-  rc.properties = {key = {type = "STRING"}}
-  rc.required = {"key"}
-  fd[14] = {name = "recall", description = "Recall a remembered fact", parameters = rc}
-  fd[15] = {name = "get_time", description = "What time is it"}
-  fd[16] = {name = "get_date", description = "What is today's date"}
-  local cc = {}
-  cc.type = "OBJECT"
-  cc.properties = {expression = {type = "STRING"}}
-  cc.required = {"expression"}
-  fd[17] = {name = "calc", description = "Calculate a math expression like 12*8+5", parameters = cc}
+  local function add(name, desc, props, req)
+    local f = {}
+    f.name = name
+    f.description = desc
+    if props then
+      local p = {}
+      p.type = "object"
+      p.properties = props
+      p.required = req
+      f.parameters = p
+    end
+    fd[#fd + 1] = f
+  end
+  add("follow", "Resume following the boss")
+  add("stay", "Stop moving and hold position")
+  add("come", "Teleport to the boss right now")
+  add("jump", "Jump")
+  add("spin", "Spin around in place")
+  add("dance", "Do a dance")
+  add("sit", "Sit down")
+  add("stand", "Stand up")
+  add("orbit", "Orbit around the boss")
+  add("orbit_off", "Stop orbiting")
+  add("mute", "Mute yourself until unmuted")
+  add("unmute", "Unmute yourself")
+  add("remember", "Remember a fact about the boss", {key = {type = "string"}, value = {type = "string"}}, {"key", "value"})
+  add("recall", "Recall a remembered fact", {key = {type = "string"}}, {"key"})
+  add("get_time", "What time is it")
+  add("get_date", "What is today's date")
+  add("calc", "Calculate a math expression like 12*8+5", {expression = {type = "string"}}, {"expression"})
   local tools = {}
-  tools[1] = {function_declarations = fd}
+  for _, f in ipairs(fd) do
+    local t = {}
+    t.type = "function"
+    t["function"] = f
+    tools[#tools + 1] = t
+  end
   return tools
 end
 
@@ -200,20 +207,24 @@ local function trim190(s)
   return string.sub(s, 1, 190)
 end
 
--- raw Gemini call, returns decoded json or nil+err
-local function gemini(contents, withTools)
+-- raw Zen call (OpenAI chat-completions shape), returns decoded json or nil+err
+local function zen(messages, withTools)
   local hr = (getgenv and (getgenv().http_request or getgenv().request)) or http_request or request
   if not hr then return nil, "no http fn (need executor)" end
   local req = {}
-  req.system_instruction = {parts = {{text = AI_SYSTEM}}}
-  if withTools then req.tools = buildTools() end
-  req.contents = contents
-  req.generationConfig = {maxOutputTokens = 150, temperature = 0.7}
+  req.model = AI_MODEL
+  req.messages = messages
+  req.max_tokens = 150
+  req.temperature = 0.7
+  if withTools then req.tools = buildZenTools() end
+  local headers = {}
+  headers["Content-Type"] = "application/json"
+  if ZEN_KEY ~= "" then headers["Authorization"] = "Bearer " .. ZEN_KEY end
   local ok, res = pcall(function()
     return hr({
-      Url = "https://generativelanguage.googleapis.com/v1beta/models/" .. AI_MODEL .. ":generateContent?key=" .. AI_GEMINI_KEY,
+      Url = "https://opencode.ai/zen/v1/chat/completions",
       Method = "POST",
-      Headers = {["Content-Type"] = "application/json"},
+      Headers = headers,
       Body = HttpService:JSONEncode(req),
     })
   end)
@@ -224,56 +235,60 @@ local function gemini(contents, withTools)
   return j, "ok"
 end
 
-local function textOf(j)
-  local parts = j.candidates and j.candidates[1] and j.candidates[1].content and j.candidates[1].content.parts
-  if not parts then return nil end
-  local t = {}
-  for _, p in ipairs(parts) do
-    if p.text and p.text ~= "" then t[#t + 1] = p.text end
+-- OpenAI message parse: returns text (or nil) and tool calls (or nil)
+local function msgOf(j)
+  local m = j.choices and j.choices[1] and j.choices[1].message
+  if not m then return nil, nil end
+  local text = nil
+  if type(m.content) == "string" and m.content ~= "" then text = m.content end
+  local calls = nil
+  if m.tool_calls then
+    calls = {}
+    for _, tc in ipairs(m.tool_calls) do
+      local fn = tc["function"]
+      if fn and fn.name then
+        local args = {}
+        if type(fn.arguments) == "string" and fn.arguments ~= "" then
+          local oka, a = pcall(function() return HttpService:JSONDecode(fn.arguments) end)
+          if oka and type(a) == "table" then args = a end
+        elseif type(fn.arguments) == "table" then
+          args = fn.arguments
+        end
+        calls[#calls + 1] = {name = fn.name, args = args}
+      end
+    end
+    if #calls == 0 then calls = nil end
   end
-  if #t == 0 then return nil end
-  return trim190(table.concat(t, " "))
-end
-
-local function callsOf(j)
-  local parts = j.candidates and j.candidates[1] and j.candidates[1].content and j.candidates[1].content.parts
-  if not parts then return nil end
-  local calls = {}
-  for _, p in ipairs(parts) do
-    if p.functionCall then calls[#calls + 1] = p.functionCall end
-  end
-  if #calls == 0 then return nil end
-  return calls
+  return text, calls
 end
 
 -- REAL AI with tools: round 1 may trigger body actions, round 2 confirms briefly.
 local lastAIError, aiBusy = "never called", false
 local function askAI(userText)
-  if AI_GEMINI_KEY == "" then lastAIError = "no key set" return nil end
   if aiBusy then lastAIError = "busy, try again" return nil end
   aiBusy = true
   local done, result = false, nil
   task.spawn(function()
-    local c1 = {}
-    c1[1] = {parts = {{text = string.sub(userText, 1, 300)}}}
-    local j, err = gemini(c1, true)
+    local m1 = {}
+    m1[1] = {role = "system", content = AI_SYSTEM}
+    m1[2] = {role = "user", content = string.sub(userText, 1, 300)}
+    local j, err = zen(m1, true)
     if not j then lastAIError = err done = true return end
-    local calls = callsOf(j)
+    local text, calls = msgOf(j)
     if not calls then
-      local t = textOf(j)
-      if t then result = t lastAIError = "ok" else lastAIError = "empty reply" end
+      if text then result = trim190(text) lastAIError = "ok" else lastAIError = "empty reply" end
       done = true return
     end
     local did = {}
     for _, c in ipairs(calls) do
       did[#did + 1] = tostring(c.name) .. " -> " .. runTool(c.name, c.args)
     end
-    local c2 = {}
-    c2[1] = {parts = {{text = "You just performed: " .. table.concat(did, "; ") .. ". Confirm to boss briefly, under 120 characters."}}}
-    local j2, err2 = gemini(c2, false)
+    local m2 = {}
+    m2[1] = {role = "user", content = "You just performed: " .. table.concat(did, "; ") .. ". Confirm to boss briefly, under 120 characters."}
+    local j2, err2 = zen(m2, false)
     if j2 then
-      local t2 = textOf(j2)
-      if t2 then result = t2 lastAIError = "ok+tools" done = true return end
+      local t2 = msgOf(j2)
+      if t2 then result = trim190(t2) lastAIError = "ok+tools" done = true return end
     end
     lastAIError = "tools done (" .. tostring(err2) .. ")"
     result = "Done, sir."
@@ -309,7 +324,7 @@ local function brain(raw)
   if string.sub(lower, 1, 7) == "!recall" then local v = memory[string.lower((string.sub(msg, 9)):match("^%s*(.-)%s*$") or "")] if v then return v .. ", sir." end return "No record, sir." end
   if lower == "!orbit" then orbiting = true following = true return "Orbiting, sir." end
   if lower == "!orbit off" then orbiting = false return "Orbit off, sir." end
-  if lower == "!about" then return "UUrIntelligence, your Gemini-powered assistant. I hear only UUshshsh_78 and can move this body. Try !tools." end
+  if lower == "!about" then return "UUrIntelligence, running mimo-v2.5-free, no key. I hear only UUshshsh_78 and can move this body. Try !tools." end
   if lower == "!tools" then return "Body tools: follow stay come jump spin dance sit stand orbit orbit_off mute unmute remember recall get_time get_date calc. Just tell me, sir." end
   if lower == "hi" or lower == "hello" or lower == "hey" then return "Hello sir. Ready to assist." end
   if string.find(lower, "how are you") then return "Operational, sir. How are you?" end
@@ -322,8 +337,7 @@ local function brain(raw)
     return askAI(q) or (FALLBACKS[math.random(1, #FALLBACKS)] .. " (AI offline: " .. lastAIError .. ")")
   end
   if lower == "!aistatus" then
-    if AI_GEMINI_KEY == "" then return "AI brain: OFFLINE (no key), sir." end
-    return "AI brain: " .. AI_MODEL .. ", last call: " .. lastAIError .. ", sir."
+    return "AI brain: " .. AI_MODEL .. " (keyless), last call: " .. lastAIError .. ", sir."
   end
   -- natural chat -> REAL AI, offline fallback if key missing/fails
   return askAI(msg) or FALLBACKS[math.random(1, #FALLBACKS)]
