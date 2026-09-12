@@ -4,7 +4,7 @@
   HOW TO USE (pick one):
    A) YOUR OWN GAME: StarterPlayer > StarterPlayerScripts > LocalScript, paste this whole file. Both main+alt auto get role.
    B) EXECUTOR on ALT only: execute this file on UUrIntelligence. Do NOT execute on main.
-  talking = Players:Chat (real replicated msg as alt) + DisplayBubble, zero-error.
+  talking = RBXGeneral:SendAsync (real message as alt, everyone sees) + bubble.
   effects on alt (follow/jump/small) replicate because alt owns its character.
   effects on owner (!speed/!heal) are NOT here - keep them in main script if needed.
 ]]
@@ -37,9 +37,9 @@ local function getOwner() return Players:FindFirstChild(OWNER_NAME) end
 local muted, following, orbiting = false, true, false
 local memory, lastReply = {}, 0
 
--- CHAT MODE: "bubble" is bulletproof everywhere (never blocked, never kills script).
--- "send" tries real replicated chat first (may be flagged as malicious by some executors).
-local CHAT_MODE = "bubble"
+-- CHAT MODE: "send" = real replicated chat via RBXGeneral:SendAsync (everyone sees it).
+-- Proven working on your executor. "bubble" = local bubbles only (alt screen only).
+local CHAT_MODE = "send"
 local channel = nil
 if CHAT_MODE == "send" then
   local ok, ch = pcall(function()
