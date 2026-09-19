@@ -1,733 +1,548 @@
--- =============================================================================
--- MULTIPLAYER ASM VM ENGINE (3D TV + 2D GUI MIRROR + LATE-JOINER SYNC)
--- Place this single script inside: ServerScriptService
--- =============================================================================
+-- ServerScriptService/SandboxManager.server.lua
+-- Sandbox Manager: creates a pocket baseplate + miniature glass cube per player.
+-- Player teleports into the pocket baseplate; a scaled replica moves inside the cube.
 
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace      = game:GetService("Workspace")
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
+local Debris         = game:GetService("Debris")
+local TweenService   = game:GetService("TweenService")
 
 --------------------------------------------------------------------------------
--- 1. REMOTE EVENTS SETUP
+-- CONFIG
 --------------------------------------------------------------------------------
-local function GetOrCreateEvent(name)
-	local event = ReplicatedStorage:FindFirstChild(name)
-	if not event then
-		event = Instance.new("RemoteEvent")
-		event.Name = name
-		event.Parent = ReplicatedStorage
-	end
-	return event
+local SANDBOX_SIZE   = 30                -- studs, pocket baseplate
+local SCALE_FACTOR   = 0.08              -- 1:12.5
+local CUBE_SIZE      = SANDBOX_SIZE * SCALE_FACTOR -- 2.4 studs
+local POCKET_HEIGHT  = 200               -- studs above origin
+local POCKET_SPACING = 100               -- horizontal spacing per player
+local HOLD_OFFSET    = CFrame.new(0, -0.35, -0.9) -- where cube sits in hand
+local PICKUP_COOLDOWN = 0.4
+
+local activeSandboxes = {}
+
+--------------------------------------------------------------------------------
+-- PALETTE / MATERIALS
+--------------------------------------------------------------------------------
+local COLOR_BASE      = Color3.fromRGB(58, 62, 74)
+local COLOR_BASE_EDGE = Color3.fromRGB(96, 104, 122)
+local COLOR_GRID      = Color3.fromRGB(80, 86, 100)
+local COLOR_GLASS     = Color3.fromRGB(150, 210, 255)
+local COLOR_FRAME     = Color3.fromRGB(230, 240, 255)
+local COLOR_EXIT      = Color3.fromRGB(255, 90, 90)
+local COLOR_ENTER     = Color3.fromRGB(90, 220, 160)
+
+--------------------------------------------------------------------------------
+-- ASSET HELPERS
+--------------------------------------------------------------------------------
+local function makePart(props)
+	local p = Instance.new("Part")
+	p.Anchored    = true
+	p.CanCollide  = true
+	p.TopSurface  = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in pairs(props) do p[k] = v end
+	return p
 end
 
-local runEvent         = GetOrCreateEvent("RunASMProgramEvent")
-local syncVRAMEvent    = GetOrCreateEvent("SyncVRAMEvent")
-local testScreenEvent  = GetOrCreateEvent("TestScreenEvent")
-local testCmdsEvent    = GetOrCreateEvent("TestCommandsEvent")
-local consoleLogEvent  = GetOrCreateEvent("ConsoleLogEvent")
+local function weldTo(part0, part1)
+	local w = Instance.new("WeldConstraint")
+	w.Part0, w.Part1 = part0, part1
+	w.Parent = part0
+	return w
+end
+
+local function makePrompt(parent, action, object, hold)
+	local pp = Instance.new("ProximityPrompt")
+	pp.ActionText   = action
+	pp.ObjectText   = object
+	pp.HoldDuration = hold or 0.2
+	pp.MaxActivationDistance = 12
+	pp.RequiresLineOfSight   = false
+	pp.Parent = parent
+	return pp
+end
+
+local function makeSurfaceGui(part, face, size)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = face
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 50
+	sg.LightInfluence = 0
+	sg.Parent = part
+	return sg
+end
 
 --------------------------------------------------------------------------------
--- 2. DISPLAY RESOLUTION & CONFIGURATION
+-- 1a. POCKET BASEPLATE
 --------------------------------------------------------------------------------
-local VGA_WIDTH  = 48    
-local VGA_HEIGHT = 27   
-local VRAM_START = 4096 
-local VRAM_SIZE  = VGA_WIDTH * VGA_HEIGHT -- 1,296 pixels
+local function buildPocketBaseplate(player)
+	local origin = Vector3.new((player.UserId % 10) * POCKET_SPACING, POCKET_HEIGHT, 0)
 
-local PlayerVMs = {}
+	local model = Instance.new("Model")
+	model.Name = "PocketBaseplate_" .. player.Name
 
---------------------------------------------------------------------------------
--- 3. 16:9 3D TV MODEL GENERATOR
---------------------------------------------------------------------------------
-local function BuildTVModel(player, playerSlot)
-	local oldModel = Workspace:FindFirstChild("TV_Monitor_" .. player.Name)
-	if oldModel then oldModel:Destroy() end
+	-- Main floor
+	local floor = makePart({
+		Name = "Floor",
+		Size = Vector3.new(SANDBOX_SIZE, 1, SANDBOX_SIZE),
+		Position = origin,
+		Material = Enum.Material.SmoothPlastic,
+		Color = COLOR_BASE,
+	})
+	floor.Parent = model
 
-	local tvModel = Instance.new("Model")
-	tvModel.Name = "TV_Monitor_" .. player.Name
+	-- Grid texture on top of the floor
+	local grid = Instance.new("Texture")
+	grid.Texture = "rbxassetid://6372755229" -- generic grid
+	grid.Face = Enum.NormalId.Top
+	grid.StudsPerTileU = 2
+	grid.StudsPerTileV = 2
+	grid.Transparency = 0.35
+	grid.Color3 = COLOR_GRID
+	grid.Parent = floor
 
-	-- Spacing in Workspace
-	local basePos = Vector3.new((playerSlot - 1) * 20 - 25, 8, -15)
-	local rotationY = math.rad(25)
-	local tvCFrame = CFrame.new(basePos) * CFrame.Angles(0, rotationY, 0)
+	-- Edge trim (4 thin bars around the baseplate)
+	local trimSize = 0.5
+	local half = SANDBOX_SIZE / 2
+	local trims = {
+		{ Size = Vector3.new(SANDBOX_SIZE + trimSize, 1.2, trimSize), Offset = Vector3.new(0, 0.1,  half) },
+		{ Size = Vector3.new(SANDBOX_SIZE + trimSize, 1.2, trimSize), Offset = Vector3.new(0, 0.1, -half) },
+		{ Size = Vector3.new(trimSize, 1.2, SANDBOX_SIZE + trimSize), Offset = Vector3.new( half, 0.1, 0) },
+		{ Size = Vector3.new(trimSize, 1.2, SANDBOX_SIZE + trimSize), Offset = Vector3.new(-half, 0.1, 0) },
+	}
+	for _, cfg in ipairs(trims) do
+		local t = makePart({
+			Size = cfg.Size,
+			CFrame = floor.CFrame * CFrame.new(cfg.Offset),
+			Material = Enum.Material.Metal,
+			Color = COLOR_BASE_EDGE,
+			CanCollide = true,
+		})
+		t.Parent = model
+	end
 
-	-- Stand Base
-	local base = Instance.new("Part")
-	base.Name = "StandBase"
-	base.Size = Vector3.new(6, 0.4, 3.5)
-	base.CFrame = tvCFrame * CFrame.new(0, -4.5, 0)
-	base.Color = Color3.fromRGB(20, 20, 25)
-	base.Material = Enum.Material.Metal
-	base.Anchored = true
-	base.Parent = tvModel
-
-	-- Stand Neck
-	local neck = Instance.new("Part")
-	neck.Name = "StandNeck"
-	neck.Size = Vector3.new(1.2, 2.8, 0.8)
-	neck.CFrame = tvCFrame * CFrame.new(0, -3, -0.2)
-	neck.Color = Color3.fromRGB(30, 30, 35)
-	neck.Material = Enum.Material.Metal
-	neck.Anchored = true
-	neck.Parent = tvModel
-
-	-- Outer Bezel
-	local body = Instance.new("Part")
-	body.Name = "TVBody"
-	body.Size = Vector3.new(13.2, 7.8, 0.6)
-	body.CFrame = tvCFrame
-	body.Color = Color3.fromRGB(15, 15, 18)
-	body.Material = Enum.Material.SmoothPlastic
-	body.Anchored = true
-	body.Parent = tvModel
-
-	-- Display Screen
-	local screenPart = Instance.new("Part")
-	screenPart.Name = "DisplayScreen"
-	screenPart.Size = Vector3.new(12.4, 7.0, 0.1)
-	screenPart.CFrame = tvCFrame * CFrame.new(0, 0, 0.31)
-	screenPart.Color = Color3.fromRGB(10, 10, 15)
-	screenPart.Material = Enum.Material.SmoothPlastic
-	screenPart.Anchored = true
-	screenPart.Parent = tvModel
-
-	-- SurfaceGui
-	local surfaceGui = Instance.new("SurfaceGui")
-	surfaceGui.Name = "DisplayCanvas"
-	surfaceGui.Face = Enum.NormalId.Front
-	surfaceGui.Adornee = screenPart
-	surfaceGui.CanvasSize = Vector2.new(960, 540)
-	surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
-	surfaceGui.LightInfluence = 0
-	surfaceGui.AlwaysOnTop = false
-	surfaceGui.Parent = screenPart
-
-	local canvasFrame = Instance.new("Frame")
-	canvasFrame.Name = "CanvasFrame"
-	canvasFrame.Size = UDim2.new(1, 0, 1, 0)
-	canvasFrame.BackgroundColor3 = Color3.fromRGB(5, 5, 10)
-	canvasFrame.BorderSizePixel = 0
-	canvasFrame.Parent = surfaceGui
-
-	local gridLayout = Instance.new("UIGridLayout")
-	gridLayout.CellSize = UDim2.new(0, 960 / VGA_WIDTH, 0, 540 / VGA_HEIGHT)
-	gridLayout.CellPadding = UDim2.new(0, 0, 0, 0)
-	gridLayout.Parent = canvasFrame
-
-	-- Build 1,296 Pixel Frames (1-based index)
-	for y = 0, VGA_HEIGHT - 1 do
-		for x = 0, VGA_WIDTH - 1 do
-			local idx = (y * VGA_WIDTH) + x + 1
-			local px = Instance.new("Frame")
-			px.Name = "Px_" .. idx
-			px.BorderSizePixel = 0
-			px.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
-			px.Parent = canvasFrame
+	-- Corner pillars (short, decorative)
+	local pillarH = 1.6
+	for _, sx in ipairs({-1, 1}) do
+		for _, sz in ipairs({-1, 1}) do
+			local p = makePart({
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(pillarH, 1.2, 1.2),
+				CFrame = floor.CFrame * CFrame.new(sx * half, pillarH/2, sz * half) * CFrame.Angles(0, 0, math.rad(90)),
+				Material = Enum.Material.Metal,
+				Color = COLOR_BASE_EDGE,
+			})
+			p.Parent = model
 		end
 	end
 
-	tvModel.Parent = Workspace
-	return tvModel
+	-- Spawn pad (glowing ring) in the middle-ish
+	local pad = makePart({
+		Name = "SpawnPad",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.3, 6, 6),
+		CFrame = floor.CFrame * CFrame.new(0, 0.6, -8) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Neon,
+		Color = COLOR_ENTER,
+		CanCollide = false,
+		Transparency = 0.15,
+	})
+	pad.Parent = model
+
+	-- Floating name tag
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0, 220, 0, 44)
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, 4, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = floor
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBold
+	label.Text = player.DisplayName .. "'s Sandbox"
+	label.TextColor3 = Color3.fromRGB(235, 240, 255)
+	label.TextStrokeTransparency = 0.4
+	label.TextScaled = true
+	label.Parent = billboard
+
+	model.PrimaryPart = floor
+	model.Parent = Workspace
+	return model, floor
 end
 
 --------------------------------------------------------------------------------
--- 4. CLIENT GUI (IDE + ON-SCREEN HUD MONITOR)
+-- 1b. GLASS CUBE
 --------------------------------------------------------------------------------
-local function BuildClientGui(player)
-	local playerGui = player:WaitForChild("PlayerGui")
-	local oldGui = playerGui:FindFirstChild("ASMEditorGui")
-	if oldGui then oldGui:Destroy() end
+local function buildGlassCube(player, spawnCFrame, baseColor)
+	local model = Instance.new("Model")
+	model.Name = "MiniCube_" .. player.Name
 
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "ASMEditorGui"
-	screenGui.ResetOnSpawn = false
-	screenGui.Parent = playerGui
+	-- Bottom floor of the cube (this is the "carry" part)
+	local cubeFloor = makePart({
+		Name = "CubeFloor",
+		Size = Vector3.new(CUBE_SIZE, 0.15, CUBE_SIZE),
+		CFrame = spawnCFrame * CFrame.new(0, 3, 0),
+		Material = Enum.Material.SmoothPlastic,
+		Color = baseColor,
+		CanCollide = true,
+	})
+	cubeFloor.Parent = model
+	model.PrimaryPart = cubeFloor
 
-	----------------------------------------------------------------------------
-	-- A. CODE EDITOR WINDOW (LEFT SIDE)
-	----------------------------------------------------------------------------
-	local window = Instance.new("Frame")
-	window.Name = "MainWindow"
-	window.Size = UDim2.new(0, 420, 0, 520)
-	window.Position = UDim2.new(0, 20, 0.5, -260)
-	window.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
-	window.BorderSizePixel = 0
-	window.Active = true
-	window.Draggable = true
-	window.Parent = screenGui
+	-- Glass shell (5 panels)
+	local half = CUBE_SIZE / 2
+	local glass = Enum.Material.Glass
+	local wallConfigs = {
+		{ Size = Vector3.new(CUBE_SIZE, CUBE_SIZE, 0.08), Offset = Vector3.new(0, half,  half) },
+		{ Size = Vector3.new(CUBE_SIZE, CUBE_SIZE, 0.08), Offset = Vector3.new(0, half, -half) },
+		{ Size = Vector3.new(0.08, CUBE_SIZE, CUBE_SIZE), Offset = Vector3.new( half, half, 0) },
+		{ Size = Vector3.new(0.08, CUBE_SIZE, CUBE_SIZE), Offset = Vector3.new(-half, half, 0) },
+		{ Size = Vector3.new(CUBE_SIZE, 0.08, CUBE_SIZE), Offset = Vector3.new(0, CUBE_SIZE, 0) },
+	}
+	for _, cfg in ipairs(wallConfigs) do
+		local wall = makePart({
+			Size = cfg.Size,
+			CFrame = cubeFloor.CFrame * CFrame.new(cfg.Offset),
+			Material = glass,
+			Color = COLOR_GLASS,
+			Transparency = 0.75,
+			Reflectance = 0.35,
+			CanCollide = true,
+		})
+		wall.Parent = model
+		weldTo(cubeFloor, wall)
+	end
 
-	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(1, 0, 0, 30)
-	title.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
-	title.Text = "  ASM Control Center - " .. player.Name
-	title.TextColor3 = Color3.fromRGB(230, 230, 230)
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Font = Enum.Font.SourceSansBold
-	title.TextSize = 15
-	title.Parent = window
+	-- Glowing edge frame (thin neon bars along the 12 edges)
+	local frame = Enum.Material.Neon
+	local frameT = 0.7
+	local bar = 0.06
+	local edges = {
+		-- vertical (4)
+		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new( half, half,  half) },
+		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new( half, half, -half) },
+		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new(-half, half,  half) },
+		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new(-half, half, -half) },
+		-- horizontal top (4)
+		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, CUBE_SIZE,  half) },
+		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, CUBE_SIZE, -half) },
+		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new( half, CUBE_SIZE, 0) },
+		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new(-half, CUBE_SIZE, 0) },
+		-- horizontal bottom (4)
+		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, 0,  half) },
+		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, 0, -half) },
+		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new( half, 0, 0) },
+		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new(-half, 0, 0) },
+	}
+	for _, cfg in ipairs(edges) do
+		local e = makePart({
+			Size = cfg.Size,
+			CFrame = cubeFloor.CFrame * CFrame.new(cfg.Offset),
+			Material = frame,
+			Color = COLOR_FRAME,
+			Transparency = frameT,
+			CanCollide = false,
+		})
+		e.Parent = model
+		weldTo(cubeFloor, e)
+	end
 
-	local textBox = Instance.new("TextBox")
-	textBox.Name = "CodeInput"
-	textBox.Size = UDim2.new(1, -20, 0, 210)
-	textBox.Position = UDim2.new(0, 10, 0, 38)
-	textBox.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
-	textBox.TextColor3 = Color3.fromRGB(80, 240, 120)
-	textBox.TextXAlignment = Enum.TextXAlignment.Left
-	textBox.TextYAlignment = Enum.TextYAlignment.Top
-	textBox.Font = Enum.Font.Code
-	textBox.TextSize = 13
-	textBox.ClearTextOnFocus = false
-	textBox.MultiLine = true
-	textBox.Text = [[; Rainbow TV Screen Pattern
-MOV R0, 4096     ; Start VRAM
-MOV R1, 5391     ; End VRAM
-MOV R2, 16711680 ; Color Red
+	model.Parent = Workspace
+	return model, cubeFloor
+end
 
-DRAW:
-    STORE R0, R2
-    ADD R2, 12000
-    INC R0
-    CMP R0, R1
-    JL DRAW
-HALT]]
-	textBox.Parent = window
+--------------------------------------------------------------------------------
+-- 1c. MINI REPLICA
+--------------------------------------------------------------------------------
+local function buildMiniReplica(character, cubeModel)
+	character.Archivable = true
+	local replica = character:Clone()
+	replica.Name = "MiniReplica_" .. character.Name
 
-	local btnBar = Instance.new("Frame")
-	btnBar.Name = "ActionButtons"
-	btnBar.Size = UDim2.new(1, -20, 0, 32)
-	btnBar.Position = UDim2.new(0, 10, 0, 256)
-	btnBar.BackgroundTransparency = 1
-	btnBar.Parent = window
-
-	local runBtn = Instance.new("TextButton")
-	runBtn.Name = "RunButton"
-	runBtn.Size = UDim2.new(0.32, -4, 1, 0)
-	runBtn.Position = UDim2.new(0, 0, 0, 0)
-	runBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 70)
-	runBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	runBtn.Text = "▶ RUN"
-	runBtn.Font = Enum.Font.SourceSansBold
-	runBtn.TextSize = 13
-	runBtn.Parent = btnBar
-
-	local testScreenBtn = Instance.new("TextButton")
-	testScreenBtn.Name = "TestScreenBtn"
-	testScreenBtn.Size = UDim2.new(0.34, -4, 1, 0)
-	testScreenBtn.Position = UDim2.new(0.32, 2, 0, 0)
-	testScreenBtn.BackgroundColor3 = Color3.fromRGB(180, 100, 0)
-	testScreenBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	testScreenBtn.Text = "📺 TEST SCREEN"
-	testScreenBtn.Font = Enum.Font.SourceSansBold
-	testScreenBtn.TextSize = 12
-	testScreenBtn.Parent = btnBar
-
-	local testCmdsBtn = Instance.new("TextButton")
-	testCmdsBtn.Name = "TestCmdsBtn"
-	testCmdsBtn.Size = UDim2.new(0.34, 0, 1, 0)
-	testCmdsBtn.Position = UDim2.new(0.66, 4, 0, 0)
-	testCmdsBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 180)
-	testCmdsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	testCmdsBtn.Text = "🧪 TEST CMDS"
-	testCmdsBtn.Font = Enum.Font.SourceSansBold
-	testCmdsBtn.TextSize = 12
-	testCmdsBtn.Parent = btnBar
-
-	local consoleLabel = Instance.new("TextLabel")
-	consoleLabel.Size = UDim2.new(1, -20, 0, 18)
-	consoleLabel.Position = UDim2.new(0, 10, 0, 296)
-	consoleLabel.BackgroundTransparency = 1
-	consoleLabel.Text = "System Console Output:"
-	consoleLabel.TextColor3 = Color3.fromRGB(160, 160, 170)
-	consoleLabel.TextXAlignment = Enum.TextXAlignment.Left
-	consoleLabel.Font = Enum.Font.SourceSansBold
-	consoleLabel.TextSize = 12
-	consoleLabel.Parent = window
-
-	local consoleBox = Instance.new("TextBox")
-	consoleBox.Name = "ConsoleBox"
-	consoleBox.Size = UDim2.new(1, -20, 0, 188)
-	consoleBox.Position = UDim2.new(0, 10, 0, 318)
-	consoleBox.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
-	consoleBox.TextColor3 = Color3.fromRGB(200, 220, 255)
-	consoleBox.TextXAlignment = Enum.TextXAlignment.Left
-	consoleBox.TextYAlignment = Enum.TextYAlignment.Top
-	consoleBox.Font = Enum.Font.Code
-	consoleBox.TextSize = 11
-	consoleBox.ClearTextOnFocus = false
-	consoleBox.MultiLine = true
-	consoleBox.TextEditable = false
-	consoleBox.Text = "[System Ready] Live output mirrors on 2D Screen and 3D TV.\n"
-	consoleBox.Parent = window
-
-	----------------------------------------------------------------------------
-	-- B. 2D ON-SCREEN DISPLAY MONITOR HUD (RIGHT SIDE)
-	----------------------------------------------------------------------------
-	local monitorWin = Instance.new("Frame")
-	monitorWin.Name = "OnScreenMonitor"
-	monitorWin.Size = UDim2.new(0, 496, 0, 310)
-	monitorWin.Position = UDim2.new(0, 450, 0.5, -260)
-	monitorWin.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-	monitorWin.BorderSizePixel = 0
-	monitorWin.Active = true
-	monitorWin.Draggable = true
-	monitorWin.Parent = screenGui
-
-	local monTitle = Instance.new("TextLabel")
-	monTitle.Size = UDim2.new(1, 0, 0, 30)
-	monTitle.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-	monTitle.Text = "  🖥 Live GUI Display Screen Mirror"
-	monTitle.TextColor3 = Color3.fromRGB(220, 220, 220)
-	monTitle.TextXAlignment = Enum.TextXAlignment.Left
-	monTitle.Font = Enum.Font.SourceSansBold
-	monTitle.TextSize = 14
-	monTitle.Parent = monitorWin
-
-	local screenBezel = Instance.new("Frame")
-	screenBezel.Size = UDim2.new(1, -16, 1, -44)
-	screenBezel.Position = UDim2.new(0, 8, 0, 36)
-	screenBezel.BackgroundColor3 = Color3.fromRGB(5, 5, 8)
-	screenBezel.BorderSizePixel = 0
-	screenBezel.Parent = monitorWin
-
-	local guiCanvasFrame = Instance.new("Frame")
-	guiCanvasFrame.Name = "GuiCanvasFrame"
-	guiCanvasFrame.Size = UDim2.new(1, 0, 1, 0)
-	guiCanvasFrame.BackgroundColor3 = Color3.fromRGB(2, 2, 5)
-	guiCanvasFrame.BorderSizePixel = 0
-	guiCanvasFrame.Parent = screenBezel
-
-	local guiGrid = Instance.new("UIGridLayout")
-	guiGrid.CellSize = UDim2.new(0, 480 / VGA_WIDTH, 0, 270 / VGA_HEIGHT)
-	guiGrid.CellPadding = UDim2.new(0, 0, 0, 0)
-	guiGrid.Parent = guiCanvasFrame
-
-	-- Build 1,296 Pixel Frames inside On-Screen GUI Mirror
-	for y = 0, VGA_HEIGHT - 1 do
-		for x = 0, VGA_WIDTH - 1 do
-			local idx = (y * VGA_WIDTH) + x + 1
-			local px = Instance.new("Frame")
-			px.Name = "Px_" .. idx
-			px.BorderSizePixel = 0
-			px.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
-			px.Parent = guiCanvasFrame
+	-- Strip scripts/tools, keep animator (needed for animation passthrough)
+	for _, v in ipairs(replica:GetDescendants()) do
+		if v:IsA("LuaSourceContainer") or v:IsA("Tool") then
+			v:Destroy()
 		end
 	end
 
-	----------------------------------------------------------------------------
-	-- C. CLIENT REPLICATION & RENDERER SCRIPT
-	----------------------------------------------------------------------------
-	local clientScript = Instance.new("LocalScript")
-	clientScript.Parent = screenGui
-	clientScript.Source = [[
-		local Players = game:GetService("Players")
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local Workspace = game:GetService("Workspace")
-		
-		local localPlayer     = Players.LocalPlayer
-		local runEvent        = ReplicatedStorage:WaitForChild("RunASMProgramEvent")
-		local syncVRAMEvent   = ReplicatedStorage:WaitForChild("SyncVRAMEvent")
-		local testScreenEvent = ReplicatedStorage:WaitForChild("TestScreenEvent")
-		local testCmdsEvent   = ReplicatedStorage:WaitForChild("TestCommandsEvent")
-		local consoleLogEvent = ReplicatedStorage:WaitForChild("ConsoleLogEvent")
+	replica:ScaleTo(SCALE_FACTOR)
 
-		local mainWin  = script.Parent.MainWindow
-		local btnBar   = mainWin.ActionButtons
-		local textBox  = mainWin.CodeInput
-		local consoleBox = mainWin.ConsoleBox
-		local guiCanvas  = script.Parent.OnScreenMonitor.ScreenBezel.GuiCanvasFrame
+	for _, v in ipairs(replica:GetDescendants()) do
+		if v:IsA("BasePart") then
+			v.Anchored  = true
+			v.CanCollide = false
+			v.CanQuery  = false
+			v.CanTouch  = false
+			v.Massless  = true
+		elseif v:IsA("Decal") or v:IsA("Texture") then
+			-- keep face textures
+		end
+	end
 
-		btnBar.RunButton.MouseButton1Click:Connect(function()
-			runEvent:FireServer(textBox.Text)
-		end)
-
-		btnBar.TestScreenBtn.MouseButton1Click:Connect(function()
-			testScreenEvent:FireServer()
-		end)
-
-		btnBar.TestCmdsBtn.MouseButton1Click:Connect(function()
-			testCmdsEvent:FireServer()
-		end)
-
-		consoleLogEvent.OnClientEvent:Connect(function(msg)
-			consoleBox.Text = consoleBox.Text .. msg .. "\n"
-			consoleBox.CursorPosition = #consoleBox.Text + 1
-		end)
-
-		-- Live VRAM Renderer (Paints 3D Workspace TV + 2D On-Screen GUI)
-		syncVRAMEvent.OnClientEvent:Connect(function(targetPlayerName, dirtyPixels)
-			-- 1. Paint 3D TV in Workspace
-			local tvModel = Workspace:FindFirstChild("TV_Monitor_" .. targetPlayerName)
-			if tvModel then
-				local screenPart = tvModel:FindFirstChild("DisplayScreen")
-				if screenPart then
-					local tvCanvas = screenPart.DisplayCanvas.CanvasFrame
-					for idx, val in pairs(dirtyPixels) do
-						local pxFrame = tvCanvas:FindFirstChild("Px_" .. idx)
-						if pxFrame then
-							local r = math.floor(val / 65536) % 256
-							local g = math.floor(val / 256) % 256
-							local b = val % 256
-							pxFrame.BackgroundColor3 = Color3.fromRGB(r, g, b)
-						end
-					end
-				end
-			end
-
-			-- 2. Paint Local 2D On-Screen GUI Monitor (If update belongs to local player)
-			if targetPlayerName == localPlayer.Name then
-				for idx, val in pairs(dirtyPixels) do
-					local pxFrame = guiCanvas:FindFirstChild("Px_" .. idx)
-					if pxFrame then
-						local r = math.floor(val / 65536) % 256
-						local g = math.floor(val / 256) % 256
-						local b = val % 256
-						pxFrame.BackgroundColor3 = Color3.fromRGB(r, g, b)
-					end
-				end
-			end
-		end)
-	]]
+	replica.Parent = cubeModel
+	return replica
 end
 
 --------------------------------------------------------------------------------
--- 5. ASSEMBLY VIRTUAL MACHINE CLASS
+-- 2. HOLD / DROP SYSTEM
 --------------------------------------------------------------------------------
-local ASMVirtualMachine = {}
-ASMVirtualMachine.__index = ASMVirtualMachine
+-- We attach the cube to the character's hand using a Motor6D on a temporary
+-- "carry" attachment. This makes the cube follow animations naturally and
+-- survives physics. The cube is unanchored, massless, and CanCollide=false
+-- while held so it doesn't fight the character.
 
-function ASMVirtualMachine.new(ownerPlayer)
-	local self = setmetatable({}, ASMVirtualMachine)
-	self.Owner = ownerPlayer
-	self:Reset()
-	return self
+local function getHand(character)
+	-- R15 hands
+	local right = character:FindFirstChild("RightHand")
+	if right then return right end
+	-- R6 fallback
+	return character:FindFirstChild("Right Arm")
 end
 
-function ASMVirtualMachine:Reset()
-	self.Registers = { R0 = 0, R1 = 0, R2 = 0, R3 = 0, R4 = 0, R5 = 0, R6 = 0, R7 = 0 }
-	self.IP = 1
-	self.Memory = table.create(8192, 0)
-	self.Flags = { Z = false, S = false }
-	self.Halted = false
-	self.Cycles = 0
-	self.MaxCycles = 150000
-	self.DirtyVRAM = {}
-end
-
-function ASMVirtualMachine:Log(msg)
-	consoleLogEvent:FireClient(self.Owner, msg)
-	print("[" .. self.Owner.Name .. "'s TV]:", msg)
-end
-
-function ASMVirtualMachine:ResolveOperand(operand)
-	if not operand then return 0 end
-	local op = tostring(operand):upper()
-	if self.Registers[op] ~= nil then return self.Registers[op] end
-	return tonumber(op) or 0
-end
-
-function ASMVirtualMachine:FlushVRAM()
-	if next(self.DirtyVRAM) ~= nil then
-		syncVRAMEvent:FireAllClients(self.Owner.Name, self.DirtyVRAM)
-		self.DirtyVRAM = {}
+local function setCubeAnchored(cubeModel, anchored)
+	for _, d in ipairs(cubeModel:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = anchored
+			if anchored then
+				d.CanCollide = d.Name == "CubeFloor"
+			end
+		end
 	end
 end
 
--- Capture full VRAM Snapshot (1,296 pixels) for late joiners
-function ASMVirtualMachine:GetVRAMSnapshot()
-	local snapshot = {}
-	for i = 1, VRAM_SIZE do
-		local addr = VRAM_START + i - 1
-		snapshot[i] = self.Memory[addr] or 0
+local function holdCube(player, interactor, data, cubeFloor)
+	local char = interactor.Character
+	if not char then return end
+	local hand = getHand(char)
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not hand or not humanoid then return end
+
+	-- Cooldown
+	if data.LastPickup and os.clock() - data.LastPickup < PICKUP_COOLDOWN then return end
+	data.LastPickup = os.clock()
+
+	-- Create a carry attachment on the hand
+	local attach = Instance.new("Attachment")
+	attach.Name = "SandboxCarry"
+	attach.CFrame = HOLD_OFFSET
+	attach.Parent = hand
+
+	-- Motor6D will move the cube with the hand
+	local motor = Instance.new("Motor6D")
+	motor.Name = "CarryMotor"
+	motor.Part0 = hand
+	motor.Part1 = cubeFloor
+	motor.C0 = attach.CFrame
+	motor.C1 = CFrame.new()
+	motor.Parent = hand
+
+	-- Unanchor all cube parts, disable collision
+	for _, d in ipairs(data.CubeModel:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = false
+			d.CanCollide = false
+			d.Massless = true
+		end
 	end
-	return snapshot
+	cubeFloor.CanCollide = false
+
+	-- Snap cube to hand immediately
+	cubeFloor.CFrame = hand.CFrame * HOLD_OFFSET
+
+	-- Store refs for cleanup
+	data.CarryMotor = motor
+	data.CarryAttachment = attach
+	data.Holder = interactor
+
+	-- Sound
+	local sfx = Instance.new("Sound")
+	sfx.SoundId = "rbxassetid://6042053626"
+	sfx.Volume = 0.4
+	sfx.Parent = cubeFloor
+	sfx:Play()
+	Debris:AddItem(sfx, 2)
 end
 
-function ASMVirtualMachine:TestScreenHardware()
-	self:Log("--> Testing TV Screen Hardware...")
-	local colors = {
-		16711680, -- Red
-		65280,    -- Green
-		255,      -- Blue
-		16776960, -- Yellow
-		16711935, -- Magenta
-		65535,    -- Cyan
-		16777215  -- White
+local function dropCube(data)
+	local cubeFloor = data.CubeFloor
+	local model = data.CubeModel
+	if not cubeFloor or not model then return end
+
+	local motor = data.CarryMotor
+	local attach = data.CarryAttachment
+
+	if motor then motor:Destroy() end
+	if attach then attach:Destroy() end
+	data.CarryMotor = nil
+	data.CarryAttachment = nil
+	data.Holder = nil
+
+	-- Re-anchor and re-enable collision, drop with a tiny settle
+	local hitCFrame = cubeFloor.CFrame
+	-- Nudge above ground so it lands cleanly
+	local ray = Ray.new(hitCFrame.Position, Vector3.new(0, -20, 0))
+	local hitPart, hitPos = Workspace:FindPartOnRayWithIgnoreList(ray, {model})
+	if hitPos then
+		hitCFrame = CFrame.new(hitPos + Vector3.new(0, CUBE_SIZE * 0.5 + 0.2, 0)) * (hitCFrame - hitCFrame.Position)
+	end
+
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = d.Name == "CubeFloor"
+			d.Massless = false
+		end
+	end
+	model:PivotTo(hitCFrame)
+end
+
+--------------------------------------------------------------------------------
+-- 3. CREATE / CLEANUP
+--------------------------------------------------------------------------------
+local function cleanupSandbox(data)
+	if not data then return end
+	if data.CarryMotor then data.CarryMotor:Destroy() end
+	if data.CarryAttachment then data.CarryAttachment:Destroy() end
+	if data.SandboxBase  then data.SandboxBase:Destroy() end
+	if data.CubeModel    then data.CubeModel:Destroy() end
+	if data.ExitPart     then data.ExitPart:Destroy() end
+end
+
+local function createSandbox(player)
+	-- Toggle off
+	if activeSandboxes[player] then
+		cleanupSandbox(activeSandboxes[player])
+		activeSandboxes[player] = nil
+		return
+	end
+
+	local character = player.Character
+	if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+
+	local spawnCFrame = character.HumanoidRootPart.CFrame
+
+	-- Pocket baseplate
+	local baseModel, baseFloor = buildPocketBaseplate(player)
+
+	-- Exit pad
+	local exitPart = makePart({
+		Name = "ExitPortal",
+		Size = Vector3.new(4, 0.4, 4),
+		CFrame = baseFloor.CFrame * CFrame.new(0, 0.7, 10),
+		Material = Enum.Material.Neon,
+		Color = COLOR_EXIT,
+		CanCollide = false,
+	})
+	exitPart.Parent = Workspace
+
+	local exitPrompt = makePrompt(exitPart, "Exit Sandbox", "Return to Main World", 0.2)
+
+	-- Glass cube in the main world
+	local cubeModel, cubeFloor = buildGlassCube(player, spawnCFrame, COLOR_BASE)
+
+	-- Mini replica
+	local miniReplica = buildMiniReplica(character, cubeModel)
+
+	-- Prompts
+	local liftPrompt  = makePrompt(cubeFloor, "Pick Up / Drop", player.DisplayName .. "'s Cube", 0.15)
+	local enterPrompt = makePrompt(cubeFloor, "Jump In",       player.DisplayName .. "'s Sandbox", 0.3)
+
+	local data = {
+		SandboxBase = baseModel,
+		BaseFloor   = baseFloor,
+		CubeFloor   = cubeFloor,
+		CubeModel   = cubeModel,
+		MiniReplica = miniReplica,
+		ExitPart    = exitPart,
 	}
 
-	for y = 0, VGA_HEIGHT - 1 do
-		for x = 0, VGA_WIDTH - 1 do
-			local pixelIdx = (y * VGA_WIDTH) + x + 1
-			local colorIdx = ((x + y) % #colors) + 1
-			local val = colors[colorIdx]
-			self.Memory[VRAM_START + pixelIdx - 1] = val
-			self.DirtyVRAM[pixelIdx] = val
-		end
-	end
-	self:FlushVRAM()
-	self:Log("✔ [PASS] TV Screen Test pattern sent to 2D GUI & 3D TV.")
-end
-
-function ASMVirtualMachine:RunInstructionTests()
-	self:Log("==========================================")
-	self:Log("--> RUNNING FULL ASSEMBLY COMMAND TEST SUITE...")
-	self:Log("==========================================")
-	
-	local passCount = 0
-	local failCount = 0
-
-	local function AssertOp(testName, condition, detail)
-		if condition then
-			passCount += 1
-			self:Log("  [PASS] " .. testName)
+	liftPrompt.Triggered:Connect(function(interactor)
+		if data.CarryMotor then
+			dropCube(data)
 		else
-			failCount += 1
-			self:Log("  [FAIL] " .. testName .. " (" .. tostring(detail) .. ")")
+			holdCube(player, interactor, data, cubeFloor)
 		end
-	end
+	end)
 
-	self:Reset()
-	self:Run("MOV R0, 42\nHALT")
-	AssertOp("MOV Instruction", self.Registers.R0 == 42, "Expected 42, got " .. self.Registers.R0)
+	enterPrompt.Triggered:Connect(function(interactor)
+		local char = interactor.Character
+		if char and char:FindFirstChild("HumanoidRootPart") then
+			char.HumanoidRootPart.CFrame = baseFloor.CFrame * CFrame.new(0, 4, -8)
+		end
+	end)
 
-	self:Reset()
-	self:Run([[
-MOV R0, 10
-ADD R0, 5
-SUB R0, 3
-MUL R0, 4
-DIV R0, 2
-MOD R0, 7
-INC R0
-DEC R0
-HALT]])
-	AssertOp("Arithmetic (ADD,SUB,MUL,DIV,MOD,INC,DEC)", self.Registers.R0 == 3, "Expected 3, got " .. self.Registers.R0)
+	exitPrompt.Triggered:Connect(function(interactor)
+		local char = interactor.Character
+		if char and char:FindFirstChild("HumanoidRootPart") then
+			char.HumanoidRootPart.CFrame = cubeFloor.CFrame * CFrame.new(0, 3, 0)
+		end
+	end)
 
-	self:Reset()
-	self:Run([[
-MOV R0, 3
-POW R0, 2
-SQRT R0
-HALT]])
-	AssertOp("Math Functions (POW, SQRT)", self.Registers.R0 == 3, "Expected 3, got " .. self.Registers.R0)
+	-- Teleport creator in
+	character.HumanoidRootPart.CFrame = baseFloor.CFrame * CFrame.new(0, 4, -8)
 
-	self:Reset()
-	self:Run([[
-MOV R0, 999
-STORE 100, R0
-LOAD R1, 100
-HALT]])
-	AssertOp("Memory (STORE & LOAD)", self.Registers.R1 == 999, "Expected 999, got " .. self.Registers.R1)
-
-	self:Reset()
-	self:Run([[
-MOV R0, 1
-MOV R1, 5
-LOOP:
-    INC R0
-    CMP R0, R1
-    JL LOOP
-HALT]])
-	AssertOp("Branching (CMP, JL, JMP)", self.Registers.R0 == 5, "Expected 5, got " .. self.Registers.R0)
-
-	self:Log("==========================================")
-	self:Log(string.format("TEST RESULTS: %d Passed, %d Failed.", passCount, failCount))
-	self:Log("==========================================")
+	activeSandboxes[player] = data
 end
 
-function ASMVirtualMachine:Assemble(sourceCode)
-	local lines = string.split(sourceCode, "\n")
-	local instructions = {}
-	local labels = {}
-
-	for _, rawLine in ipairs(lines) do
-		local line = string.gsub(rawLine, ";.*", "")
-		line = string.match(line, "^%s*(.-)%s*$")
-
-		if line ~= "" then
-			local label = string.match(line, "^([%w_]+):$")
-			if label then
-				labels[label:upper()] = #instructions + 1
-			else
-				local opcode, rest = string.match(line, "^(%w+)%s*(.*)$")
-				if opcode then
-					opcode = opcode:upper()
-					local operands = {}
-					if rest and rest ~= "" then
-						for item in string.gmatch(rest, "[^,]+") do
-							table.insert(operands, (string.match(item, "^%s*(.-)%s*$")))
-						end
-					end
-					table.insert(instructions, { Opcode = opcode, Operands = operands, Raw = line })
-				end
-			end
-		end
+local function removeSandbox(player)
+	if activeSandboxes[player] then
+		cleanupSandbox(activeSandboxes[player])
+		activeSandboxes[player] = nil
 	end
-	return instructions, labels
-end
-
-function ASMVirtualMachine:Run(sourceCode)
-	self:Reset()
-	local instructions, labels = self:Assemble(sourceCode)
-
-	while not self.Halted and self.IP <= #instructions do
-		self.Cycles += 1
-		if self.Cycles > self.MaxCycles then 
-			self:Log("[VM Error]: Program exceeded maximum safety cycles.") 
-			break 
-		end
-
-		if self.Cycles % 250 == 0 then
-			self:FlushVRAM()
-			task.wait()
-		end
-
-		local inst = instructions[self.IP]
-		local op = inst.Opcode
-		local args = inst.Operands
-		local nextIP = self.IP + 1
-
-		if op == "MOV" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] = self:ResolveOperand(args[2]) end
-
-		elseif op == "STORE" then
-			local addr = self:ResolveOperand(args[1])
-			local val = self:ResolveOperand(args[2])
-			if addr >= 1 and addr <= #self.Memory then
-				self.Memory[addr] = val
-				if addr >= VRAM_START and addr < (VRAM_START + VRAM_SIZE) then
-					local pixelIdx = (addr - VRAM_START) + 1
-					self.DirtyVRAM[pixelIdx] = val
-				end
-			end
-
-		elseif op == "LOAD" then
-			local reg = args[1]:upper()
-			local addr = self:ResolveOperand(args[2])
-			if self.Registers[reg] ~= nil and addr >= 1 and addr <= #self.Memory then
-				self.Registers[reg] = self.Memory[addr]
-			end
-
-		elseif op == "ADD" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] += self:ResolveOperand(args[2]) end
-
-		elseif op == "SUB" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] -= self:ResolveOperand(args[2]) end
-
-		elseif op == "MUL" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] *= self:ResolveOperand(args[2]) end
-
-		elseif op == "DIV" then
-			local reg = args[1]:upper()
-			local divisor = self:ResolveOperand(args[2])
-			if divisor ~= 0 and self.Registers[reg] ~= nil then self.Registers[reg] /= divisor end
-
-		elseif op == "MOD" then
-			local reg = args[1]:upper()
-			local divisor = self:ResolveOperand(args[2])
-			if divisor ~= 0 and self.Registers[reg] ~= nil then self.Registers[reg] %= divisor end
-
-		elseif op == "POW" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] = self.Registers[reg] ^ self:ResolveOperand(args[2]) end
-
-		elseif op == "SQRT" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] = math.sqrt(self.Registers[reg]) end
-
-		elseif op == "INC" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] += 1 end
-
-		elseif op == "DEC" then
-			local reg = args[1]:upper()
-			if self.Registers[reg] ~= nil then self.Registers[reg] -= 1 end
-
-		elseif op == "CMP" then
-			local diff = self:ResolveOperand(args[1]) - self:ResolveOperand(args[2])
-			self.Flags.Z = (diff == 0)
-			self.Flags.S = (diff < 0)
-
-		elseif op == "JMP" then nextIP = labels[args[1]:upper()] or nextIP
-		elseif op == "JE" or op == "JZ" then if self.Flags.Z then nextIP = labels[args[1]:upper()] or nextIP end
-		elseif op == "JNE" or op == "JNZ" then if not self.Flags.Z then nextIP = labels[args[1]:upper()] or nextIP end
-		elseif op == "JL" then if self.Flags.S then nextIP = labels[args[1]:upper()] or nextIP end
-		elseif op == "JG" then if not self.Flags.Z and not self.Flags.S then nextIP = labels[args[1]:upper()] or nextIP end
-		elseif op == "PRINT" then self:Log("PRINT Output: " .. tostring(self:ResolveOperand(args[1])))
-		elseif op == "HALT" then self.Halted = true end
-
-		self.IP = nextIP
-	end
-
-	self:FlushVRAM()
-	self:Log("Program Execution Finished.")
 end
 
 --------------------------------------------------------------------------------
--- 6. PLAYER MANAGEMENT & LATE-JOINER STATE REPLICATION
+-- 4. MOVEMENT MIRRORING
 --------------------------------------------------------------------------------
-local playerSlotCounter = 0
+RunService.Heartbeat:Connect(function()
+	for player, data in pairs(activeSandboxes) do
+		local character = player.Character
+		if character and character:FindFirstChild("HumanoidRootPart") then
+			local hrp     = character.HumanoidRootPart
+			local base    = data.BaseFloor
+			local floor   = data.CubeFloor
+			local replica = data.MiniReplica
 
-local function HandlePlayerJoined(player)
-	playerSlotCounter += 1
-	
-	-- 1. Create Workspace 3D TV & Virtual Machine for the joining player
-	BuildTVModel(player, playerSlotCounter)
-	local newVM = ASMVirtualMachine.new(player)
-	PlayerVMs[player] = newVM
+			if base and floor and replica and replica.Parent then
+				local relCFrame   = base.CFrame:ToObjectSpace(hrp.CFrame)
+				local scaledPos   = relCFrame.Position * SCALE_FACTOR
+				local rotationOnly = relCFrame - relCFrame.Position
 
-	-- 2. Inject Client IDE & 2D On-Screen HUD Screen
-	BuildClientGui(player)
+				local _, repSize = replica:GetBoundingBox()
+				local liftY = repSize.Y / 2
 
-	-- 3. LATE-JOINER SYNC: Transmit existing screens to the joining player
-	task.delay(1, function()
-		if player and player:IsDescendantOf(Players) then
-			for _, vm in pairs(PlayerVMs) do
-				local snapshot = vm:GetVRAMSnapshot()
-				syncVRAMEvent:FireClient(player, vm.Owner.Name, snapshot)
+				local targetCFrame = floor.CFrame
+					* CFrame.new(scaledPos.X, scaledPos.Y + liftY, scaledPos.Z)
+					* rotationOnly
+
+				replica:PivotTo(targetCFrame)
 			end
 		end
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- 5. CHAT + CONNECTIONS
+--------------------------------------------------------------------------------
+local function hookPlayer(player)
+	player.Chatted:Connect(function(msg)
+		local clean = msg:lower():gsub("%s+", "")
+		if clean == "!sandbox" or clean == "/sandbox" then
+			createSandbox(player)
+		end
+	end)
+
+	player.CharacterRemoving:Connect(function()
+		removeSandbox(player)
 	end)
 end
 
-Players.PlayerAdded:Connect(HandlePlayerJoined)
-
--- Handle players already present in game studio/server on script run
-for _, existingPlayer in ipairs(Players:GetPlayers()) do
-	task.spawn(function()
-		HandlePlayerJoined(existingPlayer)
-	end)
+Players.PlayerAdded:Connect(hookPlayer)
+for _, p in ipairs(Players:GetPlayers()) do
+	hookPlayer(p)
 end
 
-Players.PlayerRemoving:Connect(function(player)
-	local tvModel = Workspace:FindFirstChild("TV_Monitor_" .. player.Name)
-	if tvModel then tvModel:Destroy() end
-	PlayerVMs[player] = nil
-end)
-
---------------------------------------------------------------------------------
--- 7. EVENT HANDLERS
---------------------------------------------------------------------------------
-runEvent.OnServerEvent:Connect(function(player, sourceCode)
-	local vm = PlayerVMs[player]
-	if vm and typeof(sourceCode) == "string" then
-		task.spawn(function() vm:Run(sourceCode) end)
-	end
-end)
-
-testScreenEvent.OnServerEvent:Connect(function(player)
-	local vm = PlayerVMs[player]
-	if vm then
-		task.spawn(function() vm:TestScreenHardware() end)
-	end
-end)
-
-testCmdsEvent.OnServerEvent:Connect(function(player)
-	local vm = PlayerVMs[player]
-	if vm then
-		task.spawn(function() vm:RunInstructionTests() end)
-	end
-end)
+Players.PlayerRemoving:Connect(removeSandbox)
