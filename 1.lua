@@ -1,548 +1,462 @@
--- ServerScriptService/SandboxManager.server.lua
--- Sandbox Manager: creates a pocket baseplate + miniature glass cube per player.
--- Player teleports into the pocket baseplate; a scaled replica moves inside the cube.
+-- Pocket sandbox. Say !sandbox to toggle. Each player gets a floating
+-- baseplate with a tiny glass box on it that holds a scaled-down copy of
+-- them. Press E near the box to physically grab it — it'll spring into
+-- your hand and follow the arm animation. Press E again to drop or throw.
 
-local Workspace      = game:GetService("Workspace")
-local Players        = game:GetService("Players")
-local RunService     = game:GetService("RunService")
-local Debris         = game:GetService("Debris")
-local TweenService   = game:GetService("TweenService")
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Physics    = game:GetService("PhysicsService")
 
---------------------------------------------------------------------------------
--- CONFIG
---------------------------------------------------------------------------------
-local SANDBOX_SIZE   = 30                -- studs, pocket baseplate
-local SCALE_FACTOR   = 0.08              -- 1:12.5
-local CUBE_SIZE      = SANDBOX_SIZE * SCALE_FACTOR -- 2.4 studs
-local POCKET_HEIGHT  = 200               -- studs above origin
-local POCKET_SPACING = 100               -- horizontal spacing per player
-local HOLD_OFFSET    = CFrame.new(0, -0.35, -0.9) -- where cube sits in hand
-local PICKUP_COOLDOWN = 0.4
+local SCALE     = 0.08
+local BASE_SIZE = 32
+local CUBE_SIZE = BASE_SIZE * SCALE
+local POCKET_Y  = 512
 
-local activeSandboxes = {}
+-- Cube's resting pose in the hand. Tweak if you want it held differently.
+local GRIP = CFrame.new(0, -0.6, -0.8) * CFrame.Angles(math.rad(-30), 0, 0)
 
---------------------------------------------------------------------------------
--- PALETTE / MATERIALS
---------------------------------------------------------------------------------
-local COLOR_BASE      = Color3.fromRGB(58, 62, 74)
-local COLOR_BASE_EDGE = Color3.fromRGB(96, 104, 122)
-local COLOR_GRID      = Color3.fromRGB(80, 86, 100)
-local COLOR_GLASS     = Color3.fromRGB(150, 210, 255)
-local COLOR_FRAME     = Color3.fromRGB(230, 240, 255)
-local COLOR_EXIT      = Color3.fromRGB(255, 90, 90)
-local COLOR_ENTER     = Color3.fromRGB(90, 220, 160)
+local HOLD_FORCE = 15000
+local HOLD_RESP  = 40
 
---------------------------------------------------------------------------------
--- ASSET HELPERS
---------------------------------------------------------------------------------
-local function makePart(props)
-	local p = Instance.new("Part")
-	p.Anchored    = true
-	p.CanCollide  = true
-	p.TopSurface  = Enum.SurfaceType.Smooth
-	p.BottomSurface = Enum.SurfaceType.Smooth
-	for k, v in pairs(props) do p[k] = v end
-	return p
+do
+    local ok = pcall(function()
+        Physics:RegisterCollisionGroup("SandboxHeld")
+    end)
+    if ok then
+        Physics:CollisionGroupSetCollidable("SandboxHeld", "Default", false)
+    end
 end
 
-local function weldTo(part0, part1)
-	local w = Instance.new("WeldConstraint")
-	w.Part0, w.Part1 = part0, part1
-	w.Parent = part0
-	return w
+local sandboxes = {}
+local held = {}   -- [Model] -> state
+
+-- ── construction helpers ────────────────────────────────────────────────────
+
+local function part(props)
+    local p = Instance.new("Part")
+    p.Anchored, p.CanCollide = true, true
+    p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
+    for k, v in pairs(props) do p[k] = v end
+    return p
 end
 
-local function makePrompt(parent, action, object, hold)
-	local pp = Instance.new("ProximityPrompt")
-	pp.ActionText   = action
-	pp.ObjectText   = object
-	pp.HoldDuration = hold or 0.2
-	pp.MaxActivationDistance = 12
-	pp.RequiresLineOfSight   = false
-	pp.Parent = parent
-	return pp
+local function weld(a, b)
+    local w = Instance.new("WeldConstraint")
+    w.Part0, w.Part1 = a, b
+    w.Parent = a
 end
 
-local function makeSurfaceGui(part, face, size)
-	local sg = Instance.new("SurfaceGui")
-	sg.Face = face
-	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	sg.PixelsPerStud = 50
-	sg.LightInfluence = 0
-	sg.Parent = part
-	return sg
+local function prompt(anchor, action, object, hold)
+    local p = Instance.new("ProximityPrompt")
+    p.ActionText = action
+    p.ObjectText = object
+    p.HoldDuration = hold or 0.15
+    p.MaxActivationDistance = 10
+    p.RequiresLineOfSight = false
+    p.Parent = anchor
+    return p
 end
 
---------------------------------------------------------------------------------
--- 1a. POCKET BASEPLATE
---------------------------------------------------------------------------------
-local function buildPocketBaseplate(player)
-	local origin = Vector3.new((player.UserId % 10) * POCKET_SPACING, POCKET_HEIGHT, 0)
-
-	local model = Instance.new("Model")
-	model.Name = "PocketBaseplate_" .. player.Name
-
-	-- Main floor
-	local floor = makePart({
-		Name = "Floor",
-		Size = Vector3.new(SANDBOX_SIZE, 1, SANDBOX_SIZE),
-		Position = origin,
-		Material = Enum.Material.SmoothPlastic,
-		Color = COLOR_BASE,
-	})
-	floor.Parent = model
-
-	-- Grid texture on top of the floor
-	local grid = Instance.new("Texture")
-	grid.Texture = "rbxassetid://6372755229" -- generic grid
-	grid.Face = Enum.NormalId.Top
-	grid.StudsPerTileU = 2
-	grid.StudsPerTileV = 2
-	grid.Transparency = 0.35
-	grid.Color3 = COLOR_GRID
-	grid.Parent = floor
-
-	-- Edge trim (4 thin bars around the baseplate)
-	local trimSize = 0.5
-	local half = SANDBOX_SIZE / 2
-	local trims = {
-		{ Size = Vector3.new(SANDBOX_SIZE + trimSize, 1.2, trimSize), Offset = Vector3.new(0, 0.1,  half) },
-		{ Size = Vector3.new(SANDBOX_SIZE + trimSize, 1.2, trimSize), Offset = Vector3.new(0, 0.1, -half) },
-		{ Size = Vector3.new(trimSize, 1.2, SANDBOX_SIZE + trimSize), Offset = Vector3.new( half, 0.1, 0) },
-		{ Size = Vector3.new(trimSize, 1.2, SANDBOX_SIZE + trimSize), Offset = Vector3.new(-half, 0.1, 0) },
-	}
-	for _, cfg in ipairs(trims) do
-		local t = makePart({
-			Size = cfg.Size,
-			CFrame = floor.CFrame * CFrame.new(cfg.Offset),
-			Material = Enum.Material.Metal,
-			Color = COLOR_BASE_EDGE,
-			CanCollide = true,
-		})
-		t.Parent = model
-	end
-
-	-- Corner pillars (short, decorative)
-	local pillarH = 1.6
-	for _, sx in ipairs({-1, 1}) do
-		for _, sz in ipairs({-1, 1}) do
-			local p = makePart({
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(pillarH, 1.2, 1.2),
-				CFrame = floor.CFrame * CFrame.new(sx * half, pillarH/2, sz * half) * CFrame.Angles(0, 0, math.rad(90)),
-				Material = Enum.Material.Metal,
-				Color = COLOR_BASE_EDGE,
-			})
-			p.Parent = model
-		end
-	end
-
-	-- Spawn pad (glowing ring) in the middle-ish
-	local pad = makePart({
-		Name = "SpawnPad",
-		Shape = Enum.PartType.Cylinder,
-		Size = Vector3.new(0.3, 6, 6),
-		CFrame = floor.CFrame * CFrame.new(0, 0.6, -8) * CFrame.Angles(0, 0, math.rad(90)),
-		Material = Enum.Material.Neon,
-		Color = COLOR_ENTER,
-		CanCollide = false,
-		Transparency = 0.15,
-	})
-	pad.Parent = model
-
-	-- Floating name tag
-	local billboard = Instance.new("BillboardGui")
-	billboard.Size = UDim2.new(0, 220, 0, 44)
-	billboard.StudsOffsetWorldSpace = Vector3.new(0, 4, 0)
-	billboard.AlwaysOnTop = true
-	billboard.Parent = floor
-
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Size = UDim2.fromScale(1, 1)
-	label.Font = Enum.Font.GothamBold
-	label.Text = player.DisplayName .. "'s Sandbox"
-	label.TextColor3 = Color3.fromRGB(235, 240, 255)
-	label.TextStrokeTransparency = 0.4
-	label.TextScaled = true
-	label.Parent = billboard
-
-	model.PrimaryPart = floor
-	model.Parent = Workspace
-	return model, floor
+local function ping(parent, id, vol, pitch)
+    local s = Instance.new("Sound")
+    s.SoundId = "rbxassetid://" .. id
+    s.Volume = vol or 0.4
+    s.PlaybackSpeed = pitch or 1
+    s.Parent = parent
+    s:Play()
+    task.delay(2, function()
+        if s.Parent then s:Destroy() end
+    end)
 end
 
---------------------------------------------------------------------------------
--- 1b. GLASS CUBE
---------------------------------------------------------------------------------
-local function buildGlassCube(player, spawnCFrame, baseColor)
-	local model = Instance.new("Model")
-	model.Name = "MiniCube_" .. player.Name
+-- ── pocket dimension ────────────────────────────────────────────────────────
 
-	-- Bottom floor of the cube (this is the "carry" part)
-	local cubeFloor = makePart({
-		Name = "CubeFloor",
-		Size = Vector3.new(CUBE_SIZE, 0.15, CUBE_SIZE),
-		CFrame = spawnCFrame * CFrame.new(0, 3, 0),
-		Material = Enum.Material.SmoothPlastic,
-		Color = baseColor,
-		CanCollide = true,
-	})
-	cubeFloor.Parent = model
-	model.PrimaryPart = cubeFloor
+local function buildPocket(plr)
+    local origin = Vector3.new((plr.UserId % 8) * 120, POCKET_Y, 0)
 
-	-- Glass shell (5 panels)
-	local half = CUBE_SIZE / 2
-	local glass = Enum.Material.Glass
-	local wallConfigs = {
-		{ Size = Vector3.new(CUBE_SIZE, CUBE_SIZE, 0.08), Offset = Vector3.new(0, half,  half) },
-		{ Size = Vector3.new(CUBE_SIZE, CUBE_SIZE, 0.08), Offset = Vector3.new(0, half, -half) },
-		{ Size = Vector3.new(0.08, CUBE_SIZE, CUBE_SIZE), Offset = Vector3.new( half, half, 0) },
-		{ Size = Vector3.new(0.08, CUBE_SIZE, CUBE_SIZE), Offset = Vector3.new(-half, half, 0) },
-		{ Size = Vector3.new(CUBE_SIZE, 0.08, CUBE_SIZE), Offset = Vector3.new(0, CUBE_SIZE, 0) },
-	}
-	for _, cfg in ipairs(wallConfigs) do
-		local wall = makePart({
-			Size = cfg.Size,
-			CFrame = cubeFloor.CFrame * CFrame.new(cfg.Offset),
-			Material = glass,
-			Color = COLOR_GLASS,
-			Transparency = 0.75,
-			Reflectance = 0.35,
-			CanCollide = true,
-		})
-		wall.Parent = model
-		weldTo(cubeFloor, wall)
-	end
+    local model = Instance.new("Model")
+    model.Name = "Pocket_" .. plr.Name
 
-	-- Glowing edge frame (thin neon bars along the 12 edges)
-	local frame = Enum.Material.Neon
-	local frameT = 0.7
-	local bar = 0.06
-	local edges = {
-		-- vertical (4)
-		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new( half, half,  half) },
-		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new( half, half, -half) },
-		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new(-half, half,  half) },
-		{ Size = Vector3.new(bar, CUBE_SIZE, bar), Offset = Vector3.new(-half, half, -half) },
-		-- horizontal top (4)
-		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, CUBE_SIZE,  half) },
-		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, CUBE_SIZE, -half) },
-		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new( half, CUBE_SIZE, 0) },
-		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new(-half, CUBE_SIZE, 0) },
-		-- horizontal bottom (4)
-		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, 0,  half) },
-		{ Size = Vector3.new(CUBE_SIZE, bar, bar), Offset = Vector3.new(0, 0, -half) },
-		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new( half, 0, 0) },
-		{ Size = Vector3.new(bar, bar, CUBE_SIZE), Offset = Vector3.new(-half, 0, 0) },
-	}
-	for _, cfg in ipairs(edges) do
-		local e = makePart({
-			Size = cfg.Size,
-			CFrame = cubeFloor.CFrame * CFrame.new(cfg.Offset),
-			Material = frame,
-			Color = COLOR_FRAME,
-			Transparency = frameT,
-			CanCollide = false,
-		})
-		e.Parent = model
-		weldTo(cubeFloor, e)
-	end
+    local floor = part{
+        Name = "Floor",
+        Size = Vector3.new(BASE_SIZE, 1, BASE_SIZE),
+        Position = origin,
+        Material = Enum.Material.Concrete,
+        Color = Color3.fromRGB(36, 38, 46),
+    }
+    floor.Parent = model
 
-	model.Parent = Workspace
-	return model, cubeFloor
+    local tile = Instance.new("Texture")
+    tile.Face = Enum.NormalId.Top
+    tile.Texture = "rbxassetid://6372755229"
+    tile.StudsPerTileU = 4
+    tile.StudsPerTileV = 4
+    tile.Transparency = 0.2
+    tile.Parent = floor
+
+    local half = BASE_SIZE / 2
+    local rimDefs = {
+        { Vector3.new(BASE_SIZE + 0.8, 1.5, 0.8), Vector3.new(0, 0.25,  half) },
+        { Vector3.new(BASE_SIZE + 0.8, 1.5, 0.8), Vector3.new(0, 0.25, -half) },
+        { Vector3.new(0.8, 1.5, BASE_SIZE + 0.8), Vector3.new( half, 0.25, 0) },
+        { Vector3.new(0.8, 1.5, BASE_SIZE + 0.8), Vector3.new(-half, 0.25, 0) },
+    }
+    for _, r in ipairs(rimDefs) do
+        local b = part{
+            Size = r[1],
+            CFrame = floor.CFrame * CFrame.new(r[2]),
+            Material = Enum.Material.Metal,
+            Color = Color3.fromRGB(58, 62, 74),
+        }
+        b.Parent = model
+    end
+
+    local glow = Instance.new("PointLight")
+    glow.Brightness = 2
+    glow.Range = BASE_SIZE
+    glow.Color = Color3.fromRGB(140, 180, 255)
+    glow.Parent = floor
+
+    local sign = Instance.new("BillboardGui")
+    sign.Size = UDim2.fromOffset(220, 40)
+    sign.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
+    sign.AlwaysOnTop = true
+    sign.Parent = floor
+
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.Font = Enum.Font.GothamBold
+    label.Text = plr.DisplayName .. "'s Sandbox"
+    label.TextColor3 = Color3.fromRGB(230, 235, 255)
+    label.TextStrokeTransparency = 0.5
+    label.TextScaled = true
+    label.Parent = sign
+
+    model.PrimaryPart = floor
+    model.Parent = workspace
+    return model, floor
 end
 
---------------------------------------------------------------------------------
--- 1c. MINI REPLICA
---------------------------------------------------------------------------------
-local function buildMiniReplica(character, cubeModel)
-	character.Archivable = true
-	local replica = character:Clone()
-	replica.Name = "MiniReplica_" .. character.Name
+-- ── glass cube ──────────────────────────────────────────────────────────────
 
-	-- Strip scripts/tools, keep animator (needed for animation passthrough)
-	for _, v in ipairs(replica:GetDescendants()) do
-		if v:IsA("LuaSourceContainer") or v:IsA("Tool") then
-			v:Destroy()
-		end
-	end
+local function buildCube(plr, cf)
+    local model = Instance.new("Model")
+    model.Name = "Cube_" .. plr.Name
 
-	replica:ScaleTo(SCALE_FACTOR)
+    local base = part{
+        Name = "Base",
+        Size = Vector3.new(CUBE_SIZE, 0.15, CUBE_SIZE),
+        CFrame = cf,
+        Material = Enum.Material.SmoothPlastic,
+        Color = Color3.fromRGB(52, 56, 68),
+    }
+    base.Parent = model
+    model.PrimaryPart = base
 
-	for _, v in ipairs(replica:GetDescendants()) do
-		if v:IsA("BasePart") then
-			v.Anchored  = true
-			v.CanCollide = false
-			v.CanQuery  = false
-			v.CanTouch  = false
-			v.Massless  = true
-		elseif v:IsA("Decal") or v:IsA("Texture") then
-			-- keep face textures
-		end
-	end
+    local h = CUBE_SIZE / 2
+    local tint = Color3.fromRGB(170, 215, 255)
+    local panels = {
+        { Vector3.new(CUBE_SIZE, CUBE_SIZE, 0.06), Vector3.new(0, h,  h) },
+        { Vector3.new(CUBE_SIZE, CUBE_SIZE, 0.06), Vector3.new(0, h, -h) },
+        { Vector3.new(0.06, CUBE_SIZE, CUBE_SIZE), Vector3.new( h, h, 0) },
+        { Vector3.new(0.06, CUBE_SIZE, CUBE_SIZE), Vector3.new(-h, h, 0) },
+        { Vector3.new(CUBE_SIZE, 0.06, CUBE_SIZE), Vector3.new(0, CUBE_SIZE, 0) },
+    }
+    for _, p in ipairs(panels) do
+        local g = part{
+            Size = p[1],
+            CFrame = base.CFrame * CFrame.new(p[2]),
+            Material = Enum.Material.Glass,
+            Color = tint,
+            Transparency = 0.82,
+            Reflectance = 0.35,
+            CanCollide = true,
+        }
+        g.Parent = model
+        weld(base, g)
+    end
 
-	replica.Parent = cubeModel
-	return replica
+    for _, x in ipairs({-1, 1}) do
+        for _, z in ipairs({-1, 1}) do
+            local post = part{
+                Size = Vector3.new(0.05, CUBE_SIZE, 0.05),
+                CFrame = base.CFrame * CFrame.new(x * h, h, z * h),
+                Material = Enum.Material.Neon,
+                Color = tint,
+                Transparency = 0.25,
+                CanCollide = false,
+            }
+            post.Parent = model
+            weld(base, post)
+        end
+    end
+
+    local glow = Instance.new("PointLight")
+    glow.Brightness = 1.2
+    glow.Range = 8
+    glow.Color = tint
+    glow.Parent = base
+
+    model.Parent = workspace
+    return model, base
 end
 
---------------------------------------------------------------------------------
--- 2. HOLD / DROP SYSTEM
---------------------------------------------------------------------------------
--- We attach the cube to the character's hand using a Motor6D on a temporary
--- "carry" attachment. This makes the cube follow animations naturally and
--- survives physics. The cube is unanchored, massless, and CanCollide=false
--- while held so it doesn't fight the character.
+-- ── scaled replica ──────────────────────────────────────────────────────────
 
-local function getHand(character)
-	-- R15 hands
-	local right = character:FindFirstChild("RightHand")
-	if right then return right end
-	-- R6 fallback
-	return character:FindFirstChild("Right Arm")
+local function buildReplica(character, parent)
+    character.Archivable = true
+    local rep = character:Clone()
+    rep.Name = "Replica"
+
+    for _, d in ipairs(rep:GetDescendants()) do
+        if d:IsA("BaseScript") or d:IsA("Tool") then
+            d:Destroy()
+        end
+    end
+
+    rep:ScaleTo(SCALE)
+
+    for _, d in ipairs(rep:GetDescendants()) do
+        if d:IsA("BasePart") then
+            d.Anchored  = true
+            d.CanCollide = false
+            d.CanQuery  = false
+            d.CanTouch  = false
+            d.Massless  = true
+        end
+    end
+
+    rep.Parent = parent
+    return rep
 end
 
-local function setCubeAnchored(cubeModel, anchored)
-	for _, d in ipairs(cubeModel:GetDescendants()) do
-		if d:IsA("BasePart") then
-			d.Anchored = anchored
-			if anchored then
-				d.CanCollide = d.Name == "CubeFloor"
-			end
-		end
-	end
+-- ── grab / release ──────────────────────────────────────────────────────────
+
+local function findHand(char)
+    return char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
 end
 
-local function holdCube(player, interactor, data, cubeFloor)
-	local char = interactor.Character
-	if not char then return end
-	local hand = getHand(char)
-	local humanoid = char:FindFirstChildOfClass("Humanoid")
-	if not hand or not humanoid then return end
-
-	-- Cooldown
-	if data.LastPickup and os.clock() - data.LastPickup < PICKUP_COOLDOWN then return end
-	data.LastPickup = os.clock()
-
-	-- Create a carry attachment on the hand
-	local attach = Instance.new("Attachment")
-	attach.Name = "SandboxCarry"
-	attach.CFrame = HOLD_OFFSET
-	attach.Parent = hand
-
-	-- Motor6D will move the cube with the hand
-	local motor = Instance.new("Motor6D")
-	motor.Name = "CarryMotor"
-	motor.Part0 = hand
-	motor.Part1 = cubeFloor
-	motor.C0 = attach.CFrame
-	motor.C1 = CFrame.new()
-	motor.Parent = hand
-
-	-- Unanchor all cube parts, disable collision
-	for _, d in ipairs(data.CubeModel:GetDescendants()) do
-		if d:IsA("BasePart") then
-			d.Anchored = false
-			d.CanCollide = false
-			d.Massless = true
-		end
-	end
-	cubeFloor.CanCollide = false
-
-	-- Snap cube to hand immediately
-	cubeFloor.CFrame = hand.CFrame * HOLD_OFFSET
-
-	-- Store refs for cleanup
-	data.CarryMotor = motor
-	data.CarryAttachment = attach
-	data.Holder = interactor
-
-	-- Sound
-	local sfx = Instance.new("Sound")
-	sfx.SoundId = "rbxassetid://6042053626"
-	sfx.Volume = 0.4
-	sfx.Parent = cubeFloor
-	sfx:Play()
-	Debris:AddItem(sfx, 2)
+local function setPhysics(cube, anchored, massless, collide, group)
+    for _, d in ipairs(cube:GetDescendants()) do
+        if d:IsA("BasePart") then
+            d.Anchored  = anchored
+            d.Massless  = massless
+            d.CollisionGroup = group
+            if d.Name == "Base" or d.Material == Enum.Material.Glass then
+                d.CanCollide = collide
+            else
+                d.CanCollide = false
+            end
+        end
+    end
 end
 
-local function dropCube(data)
-	local cubeFloor = data.CubeFloor
-	local model = data.CubeModel
-	if not cubeFloor or not model then return end
+local function grab(plr, cube)
+    if held[cube] then return end
 
-	local motor = data.CarryMotor
-	local attach = data.CarryAttachment
+    local char = plr.Character
+    if not char then return end
+    local hand = findHand(char)
+    if not hand then return end
 
-	if motor then motor:Destroy() end
-	if attach then attach:Destroy() end
-	data.CarryMotor = nil
-	data.CarryAttachment = nil
-	data.Holder = nil
+    setPhysics(cube, false, true, false, "SandboxHeld")
 
-	-- Re-anchor and re-enable collision, drop with a tiny settle
-	local hitCFrame = cubeFloor.CFrame
-	-- Nudge above ground so it lands cleanly
-	local ray = Ray.new(hitCFrame.Position, Vector3.new(0, -20, 0))
-	local hitPart, hitPos = Workspace:FindPartOnRayWithIgnoreList(ray, {model})
-	if hitPos then
-		hitCFrame = CFrame.new(hitPos + Vector3.new(0, CUBE_SIZE * 0.5 + 0.2, 0)) * (hitCFrame - hitCFrame.Position)
-	end
+    local handGrip = Instance.new("Attachment")
+    handGrip.Name = "Grip"
+    handGrip.CFrame = GRIP
+    handGrip.Parent = hand
 
-	for _, d in ipairs(model:GetDescendants()) do
-		if d:IsA("BasePart") then
-			d.Anchored = true
-			d.CanCollide = d.Name == "CubeFloor"
-			d.Massless = false
-		end
-	end
-	model:PivotTo(hitCFrame)
+    local cubeGrip = Instance.new("Attachment")
+    cubeGrip.Name = "Grip"
+    cubeGrip.Parent = cube.PrimaryPart
+
+    local ap = Instance.new("AlignPosition")
+    ap.Attachment0 = cubeGrip
+    ap.Attachment1 = handGrip
+    ap.Mode = Enum.PositionAlignmentMode.TwoAttachment
+    ap.Responsiveness = HOLD_RESP
+    ap.MaxForce = HOLD_FORCE
+    ap.Parent = cube.PrimaryPart
+
+    local ao = Instance.new("AlignOrientation")
+    ao.Attachment0 = cubeGrip
+    ao.Attachment1 = handGrip
+    ao.Mode = Enum.OrientationAlignmentMode.TwoAttachment
+    ao.Responsiveness = HOLD_RESP
+    ao.MaxTorque = HOLD_FORCE * 3
+    ao.Parent = cube.PrimaryPart
+
+    local hi = Instance.new("Highlight")
+    hi.FillColor = Color3.fromRGB(170, 215, 255)
+    hi.FillTransparency = 0.85
+    hi.OutlineTransparency = 1
+    hi.Parent = cube
+
+    held[cube] = {
+        ap = ap, ao = ao,
+        handGrip = handGrip, cubeGrip = cubeGrip,
+        highlight = hi, hand = hand, holder = plr,
+    }
+
+    ping(cube.PrimaryPart, "6042053626", 0.35, 1)
 end
 
---------------------------------------------------------------------------------
--- 3. CREATE / CLEANUP
---------------------------------------------------------------------------------
-local function cleanupSandbox(data)
-	if not data then return end
-	if data.CarryMotor then data.CarryMotor:Destroy() end
-	if data.CarryAttachment then data.CarryAttachment:Destroy() end
-	if data.SandboxBase  then data.SandboxBase:Destroy() end
-	if data.CubeModel    then data.CubeModel:Destroy() end
-	if data.ExitPart     then data.ExitPart:Destroy() end
+local function release(cube)
+    local state = held[cube]
+    if not state then return end
+
+    local base = cube.PrimaryPart
+    local handVel = state.hand.AssemblyLinearVelocity
+
+    state.ap:Destroy()
+    state.ao:Destroy()
+    state.handGrip:Destroy()
+    state.cubeGrip:Destroy()
+    state.highlight:Destroy()
+
+    setPhysics(cube, false, false, true, "Default")
+
+    base.AssemblyLinearVelocity = handVel * 1.2
+    base.AssemblyAngularVelocity = Vector3.new(
+        (math.random() - 0.5) * 6,
+        (math.random() - 0.5) * 6,
+        (math.random() - 0.5) * 6
+    )
+
+    held[cube] = nil
+    ping(base, "6042053626", 0.3, 0.85)
 end
 
-local function createSandbox(player)
-	-- Toggle off
-	if activeSandboxes[player] then
-		cleanupSandbox(activeSandboxes[player])
-		activeSandboxes[player] = nil
-		return
-	end
+-- ── create / destroy ────────────────────────────────────────────────────────
 
-	local character = player.Character
-	if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+local function destroy(plr)
+    local s = sandboxes[plr]
+    if not s then return end
 
-	local spawnCFrame = character.HumanoidRootPart.CFrame
+    if held[s.cube] then
+        local st = held[s.cube]
+        st.ap:Destroy()
+        st.ao:Destroy()
+        st.handGrip:Destroy()
+        st.cubeGrip:Destroy()
+        st.highlight:Destroy()
+        held[s.cube] = nil
+    end
 
-	-- Pocket baseplate
-	local baseModel, baseFloor = buildPocketBaseplate(player)
-
-	-- Exit pad
-	local exitPart = makePart({
-		Name = "ExitPortal",
-		Size = Vector3.new(4, 0.4, 4),
-		CFrame = baseFloor.CFrame * CFrame.new(0, 0.7, 10),
-		Material = Enum.Material.Neon,
-		Color = COLOR_EXIT,
-		CanCollide = false,
-	})
-	exitPart.Parent = Workspace
-
-	local exitPrompt = makePrompt(exitPart, "Exit Sandbox", "Return to Main World", 0.2)
-
-	-- Glass cube in the main world
-	local cubeModel, cubeFloor = buildGlassCube(player, spawnCFrame, COLOR_BASE)
-
-	-- Mini replica
-	local miniReplica = buildMiniReplica(character, cubeModel)
-
-	-- Prompts
-	local liftPrompt  = makePrompt(cubeFloor, "Pick Up / Drop", player.DisplayName .. "'s Cube", 0.15)
-	local enterPrompt = makePrompt(cubeFloor, "Jump In",       player.DisplayName .. "'s Sandbox", 0.3)
-
-	local data = {
-		SandboxBase = baseModel,
-		BaseFloor   = baseFloor,
-		CubeFloor   = cubeFloor,
-		CubeModel   = cubeModel,
-		MiniReplica = miniReplica,
-		ExitPart    = exitPart,
-	}
-
-	liftPrompt.Triggered:Connect(function(interactor)
-		if data.CarryMotor then
-			dropCube(data)
-		else
-			holdCube(player, interactor, data, cubeFloor)
-		end
-	end)
-
-	enterPrompt.Triggered:Connect(function(interactor)
-		local char = interactor.Character
-		if char and char:FindFirstChild("HumanoidRootPart") then
-			char.HumanoidRootPart.CFrame = baseFloor.CFrame * CFrame.new(0, 4, -8)
-		end
-	end)
-
-	exitPrompt.Triggered:Connect(function(interactor)
-		local char = interactor.Character
-		if char and char:FindFirstChild("HumanoidRootPart") then
-			char.HumanoidRootPart.CFrame = cubeFloor.CFrame * CFrame.new(0, 3, 0)
-		end
-	end)
-
-	-- Teleport creator in
-	character.HumanoidRootPart.CFrame = baseFloor.CFrame * CFrame.new(0, 4, -8)
-
-	activeSandboxes[player] = data
+    s.pocket:Destroy()
+    s.cube:Destroy()
+    s.exit:Destroy()
+    sandboxes[plr] = nil
 end
 
-local function removeSandbox(player)
-	if activeSandboxes[player] then
-		cleanupSandbox(activeSandboxes[player])
-		activeSandboxes[player] = nil
-	end
+local function create(plr)
+    if sandboxes[plr] then
+        destroy(plr)
+        return
+    end
+
+    local char = plr.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local pocket, pocketFloor = buildPocket(plr)
+    local cube, cubeBase = buildCube(plr, hrp.CFrame * CFrame.new(0, 3, 0))
+    local replica = buildReplica(char, cube)
+
+    local exit = part{
+        Name = "Exit",
+        Shape = Enum.PartType.Cylinder,
+        Size = Vector3.new(0.25, 5, 5),
+        CFrame = pocketFloor.CFrame * CFrame.new(0, 0.65, -10) * CFrame.Angles(0, 0, math.rad(90)),
+        Material = Enum.Material.Neon,
+        Color = Color3.fromRGB(255, 90, 90),
+        Transparency = 0.2,
+        CanCollide = false,
+    }
+    exit.Parent = workspace
+
+    local exitPrompt  = prompt(exit, "Leave", "Back to the world", 0.2)
+    local grabPrompt  = prompt(cubeBase, "Grab",  plr.DisplayName .. "'s Box", 0.15)
+    local enterPrompt = prompt(cubeBase, "Enter", plr.DisplayName .. "'s Sandbox", 0.3)
+
+    grabPrompt.KeyboardKeyCode  = Enum.KeyCode.E
+    grabPrompt.GamepadKeyCode   = Enum.KeyCode.ButtonX
+    enterPrompt.KeyboardKeyCode = Enum.KeyCode.F
+    enterPrompt.GamepadKeyCode  = Enum.KeyCode.ButtonY
+
+    sandboxes[plr] = {
+        pocket = pocket, pocketFloor = pocketFloor,
+        cube = cube, cubeBase = cubeBase,
+        replica = replica, exit = exit,
+    }
+
+    grabPrompt.Triggered:Connect(function(actor)
+        if held[cube] then
+            if held[cube].holder == actor then release(cube) end
+        else
+            grab(actor, cube)
+        end
+    end)
+
+    enterPrompt.Triggered:Connect(function(actor)
+        local c = actor.Character
+        local root = c and c:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = pocketFloor.CFrame * CFrame.new(0, 4, 0)
+            ping(pocketFloor, "6042053626", 0.3, 1.3)
+        end
+    end)
+
+    exitPrompt.Triggered:Connect(function(actor)
+        local c = actor.Character
+        local root = c and c:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = cubeBase.CFrame * CFrame.new(0, 3, 0)
+            ping(cubeBase, "6042053626", 0.3, 0.8)
+        end
+    end)
+
+    hrp.CFrame = pocketFloor.CFrame * CFrame.new(0, 4, 0)
 end
 
---------------------------------------------------------------------------------
--- 4. MOVEMENT MIRRORING
---------------------------------------------------------------------------------
+-- ── replica mirroring ───────────────────────────────────────────────────────
+
 RunService.Heartbeat:Connect(function()
-	for player, data in pairs(activeSandboxes) do
-		local character = player.Character
-		if character and character:FindFirstChild("HumanoidRootPart") then
-			local hrp     = character.HumanoidRootPart
-			local base    = data.BaseFloor
-			local floor   = data.CubeFloor
-			local replica = data.MiniReplica
+    for plr, s in pairs(sandboxes) do
+        local char = plr.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then continue end
+        if not s.replica.Parent then continue end
 
-			if base and floor and replica and replica.Parent then
-				local relCFrame   = base.CFrame:ToObjectSpace(hrp.CFrame)
-				local scaledPos   = relCFrame.Position * SCALE_FACTOR
-				local rotationOnly = relCFrame - relCFrame.Position
+        local rel = s.pocketFloor.CFrame:ToObjectSpace(hrp.CFrame)
+        local scaledPos = rel.Position * SCALE
+        local rotation = rel - rel.Position
+        local _, size = s.replica:GetBoundingBox()
 
-				local _, repSize = replica:GetBoundingBox()
-				local liftY = repSize.Y / 2
-
-				local targetCFrame = floor.CFrame
-					* CFrame.new(scaledPos.X, scaledPos.Y + liftY, scaledPos.Z)
-					* rotationOnly
-
-				replica:PivotTo(targetCFrame)
-			end
-		end
-	end
+        s.replica:PivotTo(
+            s.cubeBase.CFrame
+            * CFrame.new(scaledPos.X, scaledPos.Y + size.Y * 0.5, scaledPos.Z)
+            * rotation
+        )
+    end
 end)
 
---------------------------------------------------------------------------------
--- 5. CHAT + CONNECTIONS
---------------------------------------------------------------------------------
-local function hookPlayer(player)
-	player.Chatted:Connect(function(msg)
-		local clean = msg:lower():gsub("%s+", "")
-		if clean == "!sandbox" or clean == "/sandbox" then
-			createSandbox(player)
-		end
-	end)
+-- ── wiring ──────────────────────────────────────────────────────────────────
 
-	player.CharacterRemoving:Connect(function()
-		removeSandbox(player)
-	end)
+local function hook(plr)
+    plr.Chatted:Connect(function(msg)
+        local m = msg:lower():gsub("%s+", "")
+        if m == "!sandbox" or m == "/sandbox" then
+            create(plr)
+        end
+    end)
+
+    plr.CharacterRemoving:Connect(function()
+        destroy(plr)
+    end)
 end
 
-Players.PlayerAdded:Connect(hookPlayer)
-for _, p in ipairs(Players:GetPlayers()) do
-	hookPlayer(p)
-end
-
-Players.PlayerRemoving:Connect(removeSandbox)
+Players.PlayerAdded:Connect(hook)
+for _, p in ipairs(Players:GetPlayers()) do hook(p) end
+Players.PlayerRemoving:Connect(destroy)
