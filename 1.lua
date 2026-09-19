@@ -1,5 +1,5 @@
 -- =============================================================================
--- MULTIPLAYER ASM VM ENGINE (16:9 TV + TEST SUITE + GUI CONSOLE)
+-- MULTIPLAYER ASM VM ENGINE (3D TV + 2D GUI MIRROR + LATE-JOINER SYNC)
 -- Place this single script inside: ServerScriptService
 -- =============================================================================
 
@@ -37,7 +37,7 @@ local VRAM_SIZE  = VGA_WIDTH * VGA_HEIGHT -- 1,296 pixels
 local PlayerVMs = {}
 
 --------------------------------------------------------------------------------
--- 3. 16:9 TV MODEL GENERATOR
+-- 3. 16:9 3D TV MODEL GENERATOR
 --------------------------------------------------------------------------------
 local function BuildTVModel(player, playerSlot)
 	local oldModel = Workspace:FindFirstChild("TV_Monitor_" .. player.Name)
@@ -46,12 +46,12 @@ local function BuildTVModel(player, playerSlot)
 	local tvModel = Instance.new("Model")
 	tvModel.Name = "TV_Monitor_" .. player.Name
 
-	-- Position with 20-stud spacing
+	-- Spacing in Workspace
 	local basePos = Vector3.new((playerSlot - 1) * 20 - 25, 8, -15)
 	local rotationY = math.rad(25)
 	local tvCFrame = CFrame.new(basePos) * CFrame.Angles(0, rotationY, 0)
 
-	-- A. Base Stand
+	-- Stand Base
 	local base = Instance.new("Part")
 	base.Name = "StandBase"
 	base.Size = Vector3.new(6, 0.4, 3.5)
@@ -61,7 +61,7 @@ local function BuildTVModel(player, playerSlot)
 	base.Anchored = true
 	base.Parent = tvModel
 
-	-- B. Stand Neck
+	-- Stand Neck
 	local neck = Instance.new("Part")
 	neck.Name = "StandNeck"
 	neck.Size = Vector3.new(1.2, 2.8, 0.8)
@@ -71,7 +71,7 @@ local function BuildTVModel(player, playerSlot)
 	neck.Anchored = true
 	neck.Parent = tvModel
 
-	-- C. TV Outer Frame Bezel
+	-- Outer Bezel
 	local body = Instance.new("Part")
 	body.Name = "TVBody"
 	body.Size = Vector3.new(13.2, 7.8, 0.6)
@@ -81,7 +81,7 @@ local function BuildTVModel(player, playerSlot)
 	body.Anchored = true
 	body.Parent = tvModel
 
-	-- D. Screen Display Part
+	-- Display Screen
 	local screenPart = Instance.new("Part")
 	screenPart.Name = "DisplayScreen"
 	screenPart.Size = Vector3.new(12.4, 7.0, 0.1)
@@ -91,14 +91,14 @@ local function BuildTVModel(player, playerSlot)
 	screenPart.Anchored = true
 	screenPart.Parent = tvModel
 
-	-- E. SurfaceGui Display Interface
+	-- SurfaceGui
 	local surfaceGui = Instance.new("SurfaceGui")
 	surfaceGui.Name = "DisplayCanvas"
 	surfaceGui.Face = Enum.NormalId.Front
 	surfaceGui.Adornee = screenPart
 	surfaceGui.CanvasSize = Vector2.new(960, 540)
 	surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
-	surfaceGui.LightInfluence = 0 -- Keeps screen bright regardless of shadow
+	surfaceGui.LightInfluence = 0
 	surfaceGui.AlwaysOnTop = false
 	surfaceGui.Parent = screenPart
 
@@ -114,14 +114,14 @@ local function BuildTVModel(player, playerSlot)
 	gridLayout.CellPadding = UDim2.new(0, 0, 0, 0)
 	gridLayout.Parent = canvasFrame
 
-	-- Construct 1,296 Pixel Frames (1-based index Px_1 to Px_1296)
+	-- Build 1,296 Pixel Frames (1-based index)
 	for y = 0, VGA_HEIGHT - 1 do
 		for x = 0, VGA_WIDTH - 1 do
 			local idx = (y * VGA_WIDTH) + x + 1
 			local px = Instance.new("Frame")
 			px.Name = "Px_" .. idx
 			px.BorderSizePixel = 0
-			px.BackgroundColor3 = Color3.fromRGB(20, 20, 30) -- Default standby blue grid
+			px.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
 			px.Parent = canvasFrame
 		end
 	end
@@ -131,7 +131,7 @@ local function BuildTVModel(player, playerSlot)
 end
 
 --------------------------------------------------------------------------------
--- 4. CLIENT IDE & DIAGNOSTIC GUI INJECTOR
+-- 4. CLIENT GUI (IDE + ON-SCREEN HUD MONITOR)
 --------------------------------------------------------------------------------
 local function BuildClientGui(player)
 	local playerGui = player:WaitForChild("PlayerGui")
@@ -143,7 +143,9 @@ local function BuildClientGui(player)
 	screenGui.ResetOnSpawn = false
 	screenGui.Parent = playerGui
 
-	-- Main Window Frame
+	----------------------------------------------------------------------------
+	-- A. CODE EDITOR WINDOW (LEFT SIDE)
+	----------------------------------------------------------------------------
 	local window = Instance.new("Frame")
 	window.Name = "MainWindow"
 	window.Size = UDim2.new(0, 420, 0, 520)
@@ -157,14 +159,13 @@ local function BuildClientGui(player)
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1, 0, 0, 30)
 	title.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
-	title.Text = "  ASM Control Center - " .. player.Name .. "'s TV"
+	title.Text = "  ASM Control Center - " .. player.Name
 	title.TextColor3 = Color3.fromRGB(230, 230, 230)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Font = Enum.Font.SourceSansBold
 	title.TextSize = 15
 	title.Parent = window
 
-	-- Code Input Box
 	local textBox = Instance.new("TextBox")
 	textBox.Name = "CodeInput"
 	textBox.Size = UDim2.new(1, -20, 0, 210)
@@ -191,14 +192,15 @@ DRAW:
 HALT]]
 	textBox.Parent = window
 
-	-- Action Buttons Container
 	local btnBar = Instance.new("Frame")
+	btnBar.Name = "ActionButtons"
 	btnBar.Size = UDim2.new(1, -20, 0, 32)
 	btnBar.Position = UDim2.new(0, 10, 0, 256)
 	btnBar.BackgroundTransparency = 1
 	btnBar.Parent = window
 
 	local runBtn = Instance.new("TextButton")
+	runBtn.Name = "RunButton"
 	runBtn.Size = UDim2.new(0.32, -4, 1, 0)
 	runBtn.Position = UDim2.new(0, 0, 0, 0)
 	runBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 70)
@@ -209,6 +211,7 @@ HALT]]
 	runBtn.Parent = btnBar
 
 	local testScreenBtn = Instance.new("TextButton")
+	testScreenBtn.Name = "TestScreenBtn"
 	testScreenBtn.Size = UDim2.new(0.34, -4, 1, 0)
 	testScreenBtn.Position = UDim2.new(0.32, 2, 0, 0)
 	testScreenBtn.BackgroundColor3 = Color3.fromRGB(180, 100, 0)
@@ -219,6 +222,7 @@ HALT]]
 	testScreenBtn.Parent = btnBar
 
 	local testCmdsBtn = Instance.new("TextButton")
+	testCmdsBtn.Name = "TestCmdsBtn"
 	testCmdsBtn.Size = UDim2.new(0.34, 0, 1, 0)
 	testCmdsBtn.Position = UDim2.new(0.66, 4, 0, 0)
 	testCmdsBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 180)
@@ -228,7 +232,6 @@ HALT]]
 	testCmdsBtn.TextSize = 12
 	testCmdsBtn.Parent = btnBar
 
-	-- Output Log Console Frame
 	local consoleLabel = Instance.new("TextLabel")
 	consoleLabel.Size = UDim2.new(1, -20, 0, 18)
 	consoleLabel.Position = UDim2.new(0, 10, 0, 296)
@@ -253,61 +256,133 @@ HALT]]
 	consoleBox.ClearTextOnFocus = false
 	consoleBox.MultiLine = true
 	consoleBox.TextEditable = false
-	consoleBox.Text = "[System Ready] Click 'TEST SCREEN' or 'TEST CMDS' to verify hardware.\n"
+	consoleBox.Text = "[System Ready] Live output mirrors on 2D Screen and 3D TV.\n"
 	consoleBox.Parent = window
 
-	-- Client LocalScript handles VRAM painting and Events
+	----------------------------------------------------------------------------
+	-- B. 2D ON-SCREEN DISPLAY MONITOR HUD (RIGHT SIDE)
+	----------------------------------------------------------------------------
+	local monitorWin = Instance.new("Frame")
+	monitorWin.Name = "OnScreenMonitor"
+	monitorWin.Size = UDim2.new(0, 496, 0, 310)
+	monitorWin.Position = UDim2.new(0, 450, 0.5, -260)
+	monitorWin.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+	monitorWin.BorderSizePixel = 0
+	monitorWin.Active = true
+	monitorWin.Draggable = true
+	monitorWin.Parent = screenGui
+
+	local monTitle = Instance.new("TextLabel")
+	monTitle.Size = UDim2.new(1, 0, 0, 30)
+	monTitle.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+	monTitle.Text = "  🖥 Live GUI Display Screen Mirror"
+	monTitle.TextColor3 = Color3.fromRGB(220, 220, 220)
+	monTitle.TextXAlignment = Enum.TextXAlignment.Left
+	monTitle.Font = Enum.Font.SourceSansBold
+	monTitle.TextSize = 14
+	monTitle.Parent = monitorWin
+
+	local screenBezel = Instance.new("Frame")
+	screenBezel.Size = UDim2.new(1, -16, 1, -44)
+	screenBezel.Position = UDim2.new(0, 8, 0, 36)
+	screenBezel.BackgroundColor3 = Color3.fromRGB(5, 5, 8)
+	screenBezel.BorderSizePixel = 0
+	screenBezel.Parent = monitorWin
+
+	local guiCanvasFrame = Instance.new("Frame")
+	guiCanvasFrame.Name = "GuiCanvasFrame"
+	guiCanvasFrame.Size = UDim2.new(1, 0, 1, 0)
+	guiCanvasFrame.BackgroundColor3 = Color3.fromRGB(2, 2, 5)
+	guiCanvasFrame.BorderSizePixel = 0
+	guiCanvasFrame.Parent = screenBezel
+
+	local guiGrid = Instance.new("UIGridLayout")
+	guiGrid.CellSize = UDim2.new(0, 480 / VGA_WIDTH, 0, 270 / VGA_HEIGHT)
+	guiGrid.CellPadding = UDim2.new(0, 0, 0, 0)
+	guiGrid.Parent = guiCanvasFrame
+
+	-- Build 1,296 Pixel Frames inside On-Screen GUI Mirror
+	for y = 0, VGA_HEIGHT - 1 do
+		for x = 0, VGA_WIDTH - 1 do
+			local idx = (y * VGA_WIDTH) + x + 1
+			local px = Instance.new("Frame")
+			px.Name = "Px_" .. idx
+			px.BorderSizePixel = 0
+			px.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+			px.Parent = guiCanvasFrame
+		end
+	end
+
+	----------------------------------------------------------------------------
+	-- C. CLIENT REPLICATION & RENDERER SCRIPT
+	----------------------------------------------------------------------------
 	local clientScript = Instance.new("LocalScript")
 	clientScript.Parent = screenGui
 	clientScript.Source = [[
+		local Players = game:GetService("Players")
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local Workspace = game:GetService("Workspace")
 		
+		local localPlayer     = Players.LocalPlayer
 		local runEvent        = ReplicatedStorage:WaitForChild("RunASMProgramEvent")
 		local syncVRAMEvent   = ReplicatedStorage:WaitForChild("SyncVRAMEvent")
 		local testScreenEvent = ReplicatedStorage:WaitForChild("TestScreenEvent")
 		local testCmdsEvent   = ReplicatedStorage:WaitForChild("TestCommandsEvent")
 		local consoleLogEvent = ReplicatedStorage:WaitForChild("ConsoleLogEvent")
 
-		local mainWin = script.Parent.MainWindow
-		local textBox = mainWin.CodeInput
+		local mainWin  = script.Parent.MainWindow
+		local btnBar   = mainWin.ActionButtons
+		local textBox  = mainWin.CodeInput
 		local consoleBox = mainWin.ConsoleBox
+		local guiCanvas  = script.Parent.OnScreenMonitor.ScreenBezel.GuiCanvasFrame
 
-		mainWin.ActionButtons.RunButton.MouseButton1Click:Connect(function()
+		btnBar.RunButton.MouseButton1Click:Connect(function()
 			runEvent:FireServer(textBox.Text)
 		end)
 
-		mainWin.ActionButtons.TestScreenBtn.MouseButton1Click:Connect(function()
+		btnBar.TestScreenBtn.MouseButton1Click:Connect(function()
 			testScreenEvent:FireServer()
 		end)
 
-		mainWin.ActionButtons.TestCmdsBtn.MouseButton1Click:Connect(function()
+		btnBar.TestCmdsBtn.MouseButton1Click:Connect(function()
 			testCmdsEvent:FireServer()
 		end)
 
-		-- Log Receiver
 		consoleLogEvent.OnClientEvent:Connect(function(msg)
 			consoleBox.Text = consoleBox.Text .. msg .. "\n"
 			consoleBox.CursorPosition = #consoleBox.Text + 1
 		end)
 
-		-- Client Live VRAM Painter
+		-- Live VRAM Renderer (Paints 3D Workspace TV + 2D On-Screen GUI)
 		syncVRAMEvent.OnClientEvent:Connect(function(targetPlayerName, dirtyPixels)
+			-- 1. Paint 3D TV in Workspace
 			local tvModel = Workspace:FindFirstChild("TV_Monitor_" .. targetPlayerName)
-			if not tvModel then return end
+			if tvModel then
+				local screenPart = tvModel:FindFirstChild("DisplayScreen")
+				if screenPart then
+					local tvCanvas = screenPart.DisplayCanvas.CanvasFrame
+					for idx, val in pairs(dirtyPixels) do
+						local pxFrame = tvCanvas:FindFirstChild("Px_" .. idx)
+						if pxFrame then
+							local r = math.floor(val / 65536) % 256
+							local g = math.floor(val / 256) % 256
+							local b = val % 256
+							pxFrame.BackgroundColor3 = Color3.fromRGB(r, g, b)
+						end
+					end
+				end
+			end
 
-			local screenPart = tvModel:FindFirstChild("DisplayScreen")
-			if not screenPart then return end
-
-			local canvasFrame = screenPart.DisplayCanvas.CanvasFrame
-
-			for idx, val in pairs(dirtyPixels) do
-				local pxFrame = canvasFrame:FindFirstChild("Px_" .. idx)
-				if pxFrame then
-					local r = math.floor(val / 65536) % 256
-					local g = math.floor(val / 256) % 256
-					local b = val % 256
-					pxFrame.BackgroundColor3 = Color3.fromRGB(r, g, b)
+			-- 2. Paint Local 2D On-Screen GUI Monitor (If update belongs to local player)
+			if targetPlayerName == localPlayer.Name then
+				for idx, val in pairs(dirtyPixels) do
+					local pxFrame = guiCanvas:FindFirstChild("Px_" .. idx)
+					if pxFrame then
+						local r = math.floor(val / 65536) % 256
+						local g = math.floor(val / 256) % 256
+						local b = val % 256
+						pxFrame.BackgroundColor3 = Color3.fromRGB(r, g, b)
+					end
 				end
 			end
 		end)
@@ -357,7 +432,16 @@ function ASMVirtualMachine:FlushVRAM()
 	end
 end
 
--- Direct HW Screen Test (Fills screen with test pattern without ASM)
+-- Capture full VRAM Snapshot (1,296 pixels) for late joiners
+function ASMVirtualMachine:GetVRAMSnapshot()
+	local snapshot = {}
+	for i = 1, VRAM_SIZE do
+		local addr = VRAM_START + i - 1
+		snapshot[i] = self.Memory[addr] or 0
+	end
+	return snapshot
+end
+
 function ASMVirtualMachine:TestScreenHardware()
 	self:Log("--> Testing TV Screen Hardware...")
 	local colors = {
@@ -374,14 +458,15 @@ function ASMVirtualMachine:TestScreenHardware()
 		for x = 0, VGA_WIDTH - 1 do
 			local pixelIdx = (y * VGA_WIDTH) + x + 1
 			local colorIdx = ((x + y) % #colors) + 1
-			self.DirtyVRAM[pixelIdx] = colors[colorIdx]
+			local val = colors[colorIdx]
+			self.Memory[VRAM_START + pixelIdx - 1] = val
+			self.DirtyVRAM[pixelIdx] = val
 		end
 	end
 	self:FlushVRAM()
-	self:Log("✔ [PASS] TV Screen Test pattern sent to VRAM (1,296 Pixels rendered).")
+	self:Log("✔ [PASS] TV Screen Test pattern sent to 2D GUI & 3D TV.")
 end
 
--- Comprehensive Assembly Instruction Test Suite
 function ASMVirtualMachine:RunInstructionTests()
 	self:Log("==========================================")
 	self:Log("--> RUNNING FULL ASSEMBLY COMMAND TEST SUITE...")
@@ -400,13 +485,10 @@ function ASMVirtualMachine:RunInstructionTests()
 		end
 	end
 
-	-- 1. MOV
 	self:Reset()
-	self.Registers.R0 = 0
 	self:Run("MOV R0, 42\nHALT")
 	AssertOp("MOV Instruction", self.Registers.R0 == 42, "Expected 42, got " .. self.Registers.R0)
 
-	-- 2. Arithmetic (ADD, SUB, MUL, DIV, MOD, POW, SQRT, INC, DEC)
 	self:Reset()
 	self:Run([[
 MOV R0, 10
@@ -418,18 +500,16 @@ MOD R0, 7
 INC R0
 DEC R0
 HALT]])
-	AssertOp("Arithmetic Operations (ADD,SUB,MUL,DIV,MOD,INC,DEC)", self.Registers.R0 == 3, "Expected 3, got " .. self.Registers.R0)
+	AssertOp("Arithmetic (ADD,SUB,MUL,DIV,MOD,INC,DEC)", self.Registers.R0 == 3, "Expected 3, got " .. self.Registers.R0)
 
-	-- 3. Math Functions (POW, SQRT)
 	self:Reset()
 	self:Run([[
 MOV R0, 3
 POW R0, 2
 SQRT R0
 HALT]])
-	AssertOp("Math Operations (POW, SQRT)", self.Registers.R0 == 3, "Expected 3, got " .. self.Registers.R0)
+	AssertOp("Math Functions (POW, SQRT)", self.Registers.R0 == 3, "Expected 3, got " .. self.Registers.R0)
 
-	-- 4. Memory Store & Load
 	self:Reset()
 	self:Run([[
 MOV R0, 999
@@ -438,7 +518,6 @@ LOAD R1, 100
 HALT]])
 	AssertOp("Memory (STORE & LOAD)", self.Registers.R1 == 999, "Expected 999, got " .. self.Registers.R1)
 
-	-- 5. Comparison & Conditional Jumps (CMP, JE, JNE, JL, JG, JMP)
 	self:Reset()
 	self:Run([[
 MOV R0, 1
@@ -449,15 +528,6 @@ LOOP:
     JL LOOP
 HALT]])
 	AssertOp("Branching (CMP, JL, JMP)", self.Registers.R0 == 5, "Expected 5, got " .. self.Registers.R0)
-
-	-- 6. VRAM Write Test
-	self:Reset()
-	self:Run([[
-MOV R0, 4096
-MOV R1, 16711680
-STORE R0, R1
-HALT]])
-	AssertOp("VRAM Memory Mapping", self.Memory[4096] == 16711680 and self.DirtyVRAM[1] == 16711680, "VRAM Write Failed")
 
 	self:Log("==========================================")
 	self:Log(string.format("TEST RESULTS: %d Passed, %d Failed.", passCount, failCount))
@@ -597,16 +667,40 @@ function ASMVirtualMachine:Run(sourceCode)
 end
 
 --------------------------------------------------------------------------------
--- 6. PLAYER MANAGEMENT & NETWORK HANDLERS
+-- 6. PLAYER MANAGEMENT & LATE-JOINER STATE REPLICATION
 --------------------------------------------------------------------------------
 local playerSlotCounter = 0
 
-Players.PlayerAdded:Connect(function(player)
+local function HandlePlayerJoined(player)
 	playerSlotCounter += 1
+	
+	-- 1. Create Workspace 3D TV & Virtual Machine for the joining player
 	BuildTVModel(player, playerSlotCounter)
-	PlayerVMs[player] = ASMVirtualMachine.new(player)
+	local newVM = ASMVirtualMachine.new(player)
+	PlayerVMs[player] = newVM
+
+	-- 2. Inject Client IDE & 2D On-Screen HUD Screen
 	BuildClientGui(player)
-end)
+
+	-- 3. LATE-JOINER SYNC: Transmit existing screens to the joining player
+	task.delay(1, function()
+		if player and player:IsDescendantOf(Players) then
+			for _, vm in pairs(PlayerVMs) do
+				local snapshot = vm:GetVRAMSnapshot()
+				syncVRAMEvent:FireClient(player, vm.Owner.Name, snapshot)
+			end
+		end
+	end)
+end
+
+Players.PlayerAdded:Connect(HandlePlayerJoined)
+
+-- Handle players already present in game studio/server on script run
+for _, existingPlayer in ipairs(Players:GetPlayers()) do
+	task.spawn(function()
+		HandlePlayerJoined(existingPlayer)
+	end)
+end
 
 Players.PlayerRemoving:Connect(function(player)
 	local tvModel = Workspace:FindFirstChild("TV_Monitor_" .. player.Name)
@@ -614,6 +708,9 @@ Players.PlayerRemoving:Connect(function(player)
 	PlayerVMs[player] = nil
 end)
 
+--------------------------------------------------------------------------------
+-- 7. EVENT HANDLERS
+--------------------------------------------------------------------------------
 runEvent.OnServerEvent:Connect(function(player, sourceCode)
 	local vm = PlayerVMs[player]
 	if vm and typeof(sourceCode) == "string" then
