@@ -1,0 +1,98 @@
+
+name: iOS 3.1.3 Emulator
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios3:
+    runs-on: macos-26
+    timeout-minutes: 350
+
+    steps:
+      - name: UU Startup Banner
+        run: |
+          echo "======================================"
+          echo "       iOS 3.1.3 EMULATOR"
+          echo "======================================"
+          echo ""
+          echo "       made by UU"
+          echo ""
+          echo " Device: iPod touch 2G"
+          echo " Firmware: iOS 3.1.3"
+          echo "======================================"
+
+      - name: Install dependencies
+        run: |
+          brew install ninja meson pkg-config pixman glib \
+            openssl@3 ffmpeg ccache
+
+      - name: Clone emulator
+        run: |
+          git clone https://github.com/samhenrigold/qemu-ios.git qemu-ios
+          cd qemu-ios
+          git submodule update --init --recursive
+
+      - name: Prepare firmware
+        env:
+          IOS3_BASE_URL: ${{ secrets.IOS3_BASE_URL }}
+        run: |
+          test -n "$IOS3_BASE_URL" || {
+            echo "::error::Missing IOS3_BASE_URL secret"
+            exit 1
+          }
+
+          mkdir -p device
+          curl -fL "$IOS3_BASE_URL" -o device/ios3.tar.gz
+          tar -xzf device/ios3.tar.gz -C device
+          rm device/ios3.tar.gz
+
+      - name: Build emulator
+        working-directory: qemu-ios
+        run: |
+          mkdir -p build
+          ./scripts/configure-patched-ffmpeg
+          ./scripts/ccninja qemu-system-arm
+
+      - name: Start SSH session
+        id: tmate
+        uses: mxschmitt/action-tmate@v3
+        with:
+          detached: true
+          limit-access-to-actor: true
+          tmate-server-host: ${{ secrets.TMATE_SERVER_HOST }}
+          tmate-server-port: 22
+          tmate-server-rsa-fingerprint: ${{ secrets.TMATE_RSA_FINGERPRINT }}
+          tmate-server-ed25519-fingerprint: ${{ secrets.TMATE_ED25519_FINGERPRINT }}
+
+      - name: Print SSH connection
+        env:
+          SSH_COMMAND: ${{ steps.tmate.outputs.ssh-command }}
+        run: |
+          echo ""
+          echo "======================================"
+          echo "          MADE BY UU"
+          echo "======================================"
+          echo ""
+          echo "iOS 3 SSH ACCESS:"
+          echo ""
+          echo "$SSH_COMMAND"
+          echo ""
+          echo "Copy the command into your local terminal."
+          echo ""
+          echo "======================================"
+
+      - name: Boot iOS 3
+        working-directory: qemu-ios
+        run: |
+          BASE=$(find ../device -type d -name '*.itbase' | head -n 1)
+
+          test -n "$BASE" || {
+            echo "::error::No .itbase device found"
+            exit 1
+          }
+
+          swift run --package-path tests/sessions sessions single "$BASE"
