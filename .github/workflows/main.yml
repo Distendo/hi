@@ -29,24 +29,12 @@ jobs:
       - name: Configure Kali SSH
         run: |
           docker exec kali bash -c "mkdir -p /run/sshd && echo 'root:kali' | chpasswd && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && /usr/sbin/sshd"
-          docker exec kali bash -c "apt install -y openssh-server || true"
 
-      - name: Install tmate
-        run: |
-          sudo apt update
-          sudo apt install -y tmate
-
-      - name: Open SSH tunnel (tmate)
-        run: |
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          echo "=================================================="
-          echo "SSH INTO THE RUNNER:"
-          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-          echo ""
-          echo "ONCE INSIDE THE RUNNER, ENTER KALI WITH:"
-          echo "  docker exec -it kali bash"
-          echo "=================================================="
+      - name: Setup upterm session
+        uses: owenthereal/action-upterm@v2
+        with:
+          ## Limit access to only the user who triggered the workflow
+          limit-access-to-actor: true
 
       - name: Keep alive
         run: |
